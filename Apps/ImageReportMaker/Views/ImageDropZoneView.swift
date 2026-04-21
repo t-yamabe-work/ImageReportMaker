@@ -6,96 +6,137 @@ struct ImageDropZoneView: View {
     @ObservedObject var viewModel: ReportViewModel
     @State private var isTargeted = false
 
-    private let accepted: [UTType] = [.png, .jpeg, .fileURL]
+    // W3-C: .png/.jpeg だけだと一部のシステムで弾かれるため .image と .fileURL も含める
+    private let acceptedTypes: [UTType] = [.png, .jpeg, .image, .fileURL]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text("画像")
-                    .font(.headline)
+                    .font(.title2)
+                    .bold()
                 Spacer()
-                Button("追加…") { presentOpenPanel() }
-                    .buttonStyle(.borderless)
+                Button {
+                    presentOpenPanel()
+                } label: {
+                    Label("追加…", systemImage: "photo.badge.plus")
+                        .font(.title3)
+                }
+                .buttonStyle(.borderless)
             }
 
             dropTarget
 
             if !viewModel.imageURLs.isEmpty {
                 ScrollView(.horizontal, showsIndicators: true) {
-                    LazyHStack(spacing: 8) {
+                    LazyHStack(spacing: 10) {
                         ForEach(viewModel.imageURLs, id: \.self) { url in
                             thumbnail(for: url)
                         }
                     }
-                    .padding(.vertical, 4)
+                    .padding(.vertical, 6)
                 }
-                .frame(height: 96)
+                .frame(height: 120)
             }
         }
     }
 
     private var dropTarget: some View {
-        RoundedRectangle(cornerRadius: 10, style: .continuous)
+        RoundedRectangle(cornerRadius: 12, style: .continuous)
             .strokeBorder(
                 isTargeted ? Color.accentColor : Color.secondary.opacity(0.5),
-                style: StrokeStyle(lineWidth: 1.5, dash: [6, 4])
+                style: StrokeStyle(lineWidth: 1.8, dash: [8, 5])
             )
             .background(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(isTargeted ? Color.accentColor.opacity(0.08) : Color.clear)
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(isTargeted ? Color.accentColor.opacity(0.1) : Color.clear)
             )
-            .frame(height: 72)
+            .frame(height: 88)
             .overlay(
                 Text("ここに png / jpg をドロップ")
+                    .font(.title3)
                     .foregroundStyle(.secondary)
             )
-            .onDrop(of: accepted, isTargeted: $isTargeted, perform: handleDrop(providers:))
+            .contentShape(Rectangle())
+            .onDrop(of: acceptedTypes, isTargeted: $isTargeted, perform: handleDrop(providers:))
     }
 
     private func thumbnail(for url: URL) -> some View {
         ZStack(alignment: .topTrailing) {
-            if let image = NSImage(contentsOf: url) {
-                Image(nsImage: image)
-                    .resizable()
-                    .scaledToFill()
-                    .frame(width: 88, height: 88)
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
-            } else {
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(Color.secondary.opacity(0.2))
-                    .frame(width: 88, height: 88)
-                    .overlay(Text("?"))
-            }
+            thumbnailImage(for: url)
+                .frame(width: 108, height: 108)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
 
+            // W3-D: plain ボタンに contentShape でヒット領域を安定させる
             Button {
                 viewModel.removeImage(url)
-                viewModel.refreshPreview()
+                viewModel.requestPreviewRefresh()
             } label: {
                 Image(systemName: "xmark.circle.fill")
-                    .foregroundStyle(.white, .black.opacity(0.6))
-                    .font(.title3)
+                    .foregroundStyle(.white, .black.opacity(0.75))
+                    .font(.title2)
+                    .padding(4)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .padding(2)
+            .help("この画像を削除")
         }
     }
 
+    @ViewBuilder
+    private func thumbnailImage(for url: URL) -> some View {
+        if let image = NSImage(contentsOf: url) {
+            Image(nsImage: image)
+                .resizable()
+                .scaledToFill()
+        } else {
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.secondary.opacity(0.2))
+                .overlay(
+                    Image(systemName: "photo")
+                        .font(.title)
+                        .foregroundStyle(.secondary)
+                )
+        }
+    }
+
+    // MARK: - Drop handling (W3-C)
+
     private func handleDrop(providers: [NSItemProvider]) -> Bool {
-        let providers = providers
+        let captured = providers
         Task { @MainActor in
             var collected: [URL] = []
-            for provider in providers {
-                if let url = await Self.loadURL(from: provider) {
+            for provider in captured {
+                if let url = await Self.resolveURL(from: provider) {
                     collected.append(url)
                 }
             }
             viewModel.addImages(collected)
-            viewModel.refreshPreview()
+            viewModel.requestPreviewRefresh()
         }
         return true
     }
 
-    private static func loadURL(from provider: NSItemProvider) async -> URL? {
+    private static func resolveURL(from provider: NSItemProvider) async -> URL? {
+        // 1) まず fileURL として取得を試みる
+        if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
+            if let url = await loadFileURL(from: provider) {
+                if isAcceptedImage(url) { return url }
+            }
+        }
+        // 2) それでもだめなら、コピーされたファイル表現で取得
+        for type in [UTType.png.identifier, UTType.jpeg.identifier, UTType.image.identifier] {
+            if provider.hasItemConformingToTypeIdentifier(type) {
+                if let url = await loadFileRepresentation(from: provider, type: type),
+                   isAcceptedImage(url) {
+                    return url
+                }
+            }
+        }
+        return nil
+    }
+
+    private static func loadFileURL(from provider: NSItemProvider) async -> URL? {
         await withCheckedContinuation { (continuation: CheckedContinuation<URL?, Never>) in
             provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier) { item, _ in
                 if let data = item as? Data,
@@ -110,6 +151,33 @@ struct ImageDropZoneView: View {
         }
     }
 
+    private static func loadFileRepresentation(
+        from provider: NSItemProvider,
+        type: String
+    ) async -> URL? {
+        await withCheckedContinuation { (continuation: CheckedContinuation<URL?, Never>) in
+            _ = provider.loadFileRepresentation(forTypeIdentifier: type) { tmpURL, _ in
+                guard let tmpURL else {
+                    continuation.resume(returning: nil)
+                    return
+                }
+                let dest = FileManager.default.temporaryDirectory
+                    .appendingPathComponent(UUID().uuidString + "-" + tmpURL.lastPathComponent)
+                do {
+                    try FileManager.default.copyItem(at: tmpURL, to: dest)
+                    continuation.resume(returning: dest)
+                } catch {
+                    continuation.resume(returning: nil)
+                }
+            }
+        }
+    }
+
+    private static func isAcceptedImage(_ url: URL) -> Bool {
+        let ext = url.pathExtension.lowercased()
+        return ext == "png" || ext == "jpg" || ext == "jpeg"
+    }
+
     private func presentOpenPanel() {
         let panel = NSOpenPanel()
         panel.allowsMultipleSelection = true
@@ -117,7 +185,7 @@ struct ImageDropZoneView: View {
         panel.allowedContentTypes = [.png, .jpeg]
         if panel.runModal() == .OK {
             viewModel.addImages(panel.urls)
-            viewModel.refreshPreview()
+            viewModel.requestPreviewRefresh()
         }
     }
 }
@@ -125,5 +193,5 @@ struct ImageDropZoneView: View {
 #Preview {
     ImageDropZoneView(viewModel: ReportViewModel())
         .padding()
-        .frame(width: 400)
+        .frame(width: 480)
 }
