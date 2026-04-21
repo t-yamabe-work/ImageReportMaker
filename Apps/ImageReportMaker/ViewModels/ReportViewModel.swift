@@ -37,8 +37,6 @@ final class ReportViewModel: ObservableObject {
     private var debounceTask: Task<Void, Never>?
 
     private static let previewDebounceNanos: UInt64 = 300_000_000
-    nonisolated static let previewDpi: Double = 72.0
-    nonisolated static let exportDpi: Double = 150.0
 
     init(
         preferences: UserPreferences = .shared,
@@ -154,7 +152,7 @@ final class ReportViewModel: ObservableObject {
         await Task.detached(priority: .userInitiated) { () -> Data? in
             try? ReportRenderer.render(
                 model: model,
-                options: RenderOptions(format: .png, dpi: previewDpi)
+                options: RenderOptions.preview(format: .png)
             )
         }.value
     }
@@ -257,7 +255,7 @@ final class ReportViewModel: ObservableObject {
             do {
                 let data = try ReportRenderer.render(
                     model: model,
-                    options: RenderOptions(format: format, dpi: exportDpi)
+                    options: RenderOptions.export(format: format)
                 )
                 try data.write(to: url, options: .atomic)
                 return .success(url)
