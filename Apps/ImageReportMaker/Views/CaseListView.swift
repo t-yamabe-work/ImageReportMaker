@@ -5,16 +5,18 @@ struct CaseListView: View {
     @ObservedObject var viewModel: ReportViewModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text("案件")
-                    .font(.headline)
+                    .font(.title2)
+                    .bold()
                 Spacer()
                 Button {
                     viewModel.addCase()
-                    viewModel.refreshPreview()
+                    viewModel.requestPreviewRefresh()
                 } label: {
                     Label("追加", systemImage: "plus")
+                        .font(.title3)
                 }
                 .buttonStyle(.borderless)
             }
@@ -23,20 +25,21 @@ struct CaseListView: View {
                 ForEach($viewModel.cases) { $item in
                     CaseRowView(
                         item: $item,
-                        onChange: { viewModel.refreshPreview() }
+                        onChange: { viewModel.requestPreviewRefresh() }
                     )
+                    .listRowInsets(EdgeInsets(top: 10, leading: 8, bottom: 10, trailing: 8))
                 }
                 .onDelete { offsets in
                     viewModel.removeCase(at: offsets)
-                    viewModel.refreshPreview()
+                    viewModel.requestPreviewRefresh()
                 }
                 .onMove { source, destination in
                     viewModel.moveCase(from: source, to: destination)
-                    viewModel.refreshPreview()
+                    viewModel.requestPreviewRefresh()
                 }
             }
             .listStyle(.inset)
-            .frame(minHeight: 140)
+            .frame(minHeight: 200)
         }
     }
 }
@@ -46,27 +49,32 @@ private struct CaseRowView: View {
     let onChange: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(alignment: .firstTextBaseline, spacing: 4) {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text("●")
+                    .font(.title3)
                 TextField("案件名", text: $item.title)
+                    .font(.title3)
                     .textFieldStyle(.roundedBorder)
                     .onChange(of: item.title) { _ in onChange() }
             }
-            HStack(alignment: .firstTextBaseline, spacing: 4) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text("→")
-                    .padding(.leading, 12)
-                TextField("詳細", text: $item.detail)
+                    .font(.title3)
+                    .padding(.leading, 14)
+                TextField("詳細", text: $item.detail, axis: .vertical)
+                    .lineLimit(1...4)
+                    .font(.title3)
                     .textFieldStyle(.roundedBorder)
                     .onChange(of: item.detail) { _ in onChange() }
             }
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, 4)
     }
 }
 
 #Preview {
     CaseListView(viewModel: ReportViewModel())
         .padding()
-        .frame(width: 400, height: 260)
+        .frame(width: 480, height: 320)
 }
