@@ -6,36 +6,28 @@ struct ContentView: View {
 
     var body: some View {
         HSplitView {
-            VStack(alignment: .leading, spacing: 0) {
-                Text("入力フォーム")
-                    .font(.headline)
-                    .padding()
-                Divider()
-                ScrollView {
-                    // TODO: worker3 で HeaderFormView / CaseListView / ImageDropZoneView を組み上げる
-                    Text("（フォーム実装予定）")
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .padding()
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    HeaderFormView(viewModel: viewModel)
+                    Divider()
+                    CaseListView(viewModel: viewModel)
+                    Divider()
+                    ImageDropZoneView(viewModel: viewModel)
+                    Divider()
+                    ExportPanel(viewModel: viewModel)
                 }
+                .padding(16)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .frame(minWidth: 360)
+            .frame(minWidth: 380, idealWidth: 420)
 
-            VStack(alignment: .leading, spacing: 0) {
-                Text("プレビュー")
-                    .font(.headline)
-                    .padding()
-                Divider()
-                // TODO: worker3 で PreviewView を実装
-                Text("（プレビュー実装予定）")
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
-            .frame(minWidth: 480)
+            PreviewView(viewModel: viewModel)
+                .frame(minWidth: 480)
         }
     }
 }
 
 #Preview {
     ContentView()
+        .frame(width: 960, height: 720)
 }
