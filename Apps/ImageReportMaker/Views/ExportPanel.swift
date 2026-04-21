@@ -22,6 +22,10 @@ struct ExportPanel: View {
 
             Divider()
 
+            collisionRow
+
+            Divider()
+
             exportRow
 
             statusArea
@@ -116,6 +120,26 @@ struct ExportPanel: View {
             }
             .font(.title3)
             .buttonStyle(.bordered)
+        }
+    }
+
+    // W3-K: 同名ファイル衝突ポリシー
+    private var collisionRow: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            Text("同名ファイル")
+                .font(.title3)
+                .frame(width: 80, alignment: .leading)
+            Picker("", selection: $viewModel.collisionPolicy) {
+                ForEach(FileCollisionPolicy.allCases) { policy in
+                    Text(policy.label).tag(policy)
+                }
+            }
+            .labelsHidden()
+            .pickerStyle(.segmented)
+            .font(.title3)
+            .onChange(of: viewModel.collisionPolicy) { _ in
+                viewModel.persistCollisionPolicy()
+            }
         }
     }
 
