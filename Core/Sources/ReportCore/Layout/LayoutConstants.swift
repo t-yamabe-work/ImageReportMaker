@@ -9,7 +9,7 @@ public enum LayoutConstants {
     public static let maxBlockHeightMm: Double = 1200.0
     public static let contentMarginXMm: Double = 3.0
     public static let grayMarginYMm: Double = 5.0
-    public static let textToBlockGapMm: Double = 6.0
+    public static let textToBlockGapMm: Double = 3.0
 
     public static let minColumns: Int = 1
     public static let maxColumns: Int = 5

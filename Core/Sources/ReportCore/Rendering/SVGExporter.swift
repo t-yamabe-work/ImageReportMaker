@@ -35,16 +35,17 @@ public enum SVGExporter {
         }
 
         // Header text
-        let dateText = ReportRenderer.formatHeaderDate(layout.model.date)
         svg += textElement("名前", x: 22.19, y: layout.headerBaselineYPt, size: LayoutConstants.headerNameLabelFontSizePt, cls: "t-w3")
         svg += textElement(layout.model.authorName, x: 75.65, y: layout.headerBaselineYPt, size: LayoutConstants.headerFontSizePt, cls: "t-w6")
-        svg += textElement(dateText, x: 295.1, y: layout.headerBaselineYPt, size: LayoutConstants.headerFontSizePt, cls: "t-w3")
+        svg += textElement(layout.dateText, x: 295.1, y: layout.headerBaselineYPt, size: layout.dateFontSizePt, cls: "t-w3")
 
         // Rules
         svg += "<line class=\"rule-solid\" x1=\"0\" y1=\"\(format(layout.solidRuleYPt))\" "
         svg += "x2=\"\(format(pageW))\" y2=\"\(format(layout.solidRuleYPt))\"/>\n"
-        svg += "<line class=\"rule-dashed\" x1=\"0\" y1=\"\(format(layout.dashedRuleYPt))\" "
-        svg += "x2=\"\(format(pageW))\" y2=\"\(format(layout.dashedRuleYPt))\"/>\n"
+        svg += "<line class=\"rule-dashed\" x1=\"0\" y1=\"\(format(layout.dashedTopYPt))\" "
+        svg += "x2=\"\(format(pageW))\" y2=\"\(format(layout.dashedTopYPt))\"/>\n"
+        svg += "<line class=\"rule-dashed\" x1=\"0\" y1=\"\(format(layout.dashedBottomYPt))\" "
+        svg += "x2=\"\(format(pageW))\" y2=\"\(format(layout.dashedBottomYPt))\"/>\n"
 
         // Body
         let leftPt = LayoutConstants.contentMarginXMm * mm

@@ -82,7 +82,8 @@ public enum ReportRenderer {
         let pageHeightPt: Double
         let headerBaselineYPt: Double
         let solidRuleYPt: Double
-        let dashedRuleYPt: Double
+        let dashedTopYPt: Double
+        let dashedBottomYPt: Double
         let bodyStartYPt: Double
         let caseLineHeightPt: Double
         let caseDetailOffsetPt: Double
@@ -90,6 +91,8 @@ public enum ReportRenderer {
         let grayHeightPt: Double
         let grid: GridLayoutResult
         let images: [LoadedImage]
+        let dateFontSizePt: Double
+        let dateText: String
     }
 
     struct LoadedImage {
@@ -127,9 +130,8 @@ public enum ReportRenderer {
         // Header geometry from layout-spec.md
         let headerBaselineYPt: Double = 40.0
         let solidRuleYPt: Double = 51.44
-        let dashedRuleYPt: Double = 138.95
 
-        let bodyStartYPt: Double = dashedRuleYPt + 20.0
+        let bodyStartYPt: Double = solidRuleYPt + 15.0
         let caseDetailOffsetPt: Double = 38.13
         let caseBlockHeightPt: Double = caseDetailOffsetPt + LayoutConstants.caseDetailFontSizePt + 10.0
 
@@ -138,9 +140,23 @@ public enum ReportRenderer {
 
         let grayTopYPt = bodyBottomPt + LayoutConstants.textToBlockGapMm * mm
         let grayHeightPt = grid.totalBlockHeightMm * mm
+        let dashedTopYPt = grayTopYPt
+        let dashedBottomYPt = grayTopYPt + grayHeightPt
 
         let bottomPaddingPt: Double = 30.0
         let pageHeightPt = grayTopYPt + grayHeightPt + bottomPaddingPt
+
+        // Date text with shrink-to-fit
+        let dateText = formatHeaderDate(model.date)
+        let dateXPt: Double = 295.1
+        let rightPaddingPt: Double = 8.0
+        let maxDateWidthPt = pageWidthPt - dateXPt - rightPaddingPt
+        let dateFontSizePt = fittedFontSize(
+            text: dateText,
+            weight: .w3,
+            baseSize: LayoutConstants.headerFontSizePt,
+            maxWidth: maxDateWidthPt
+        )
 
         return PreparedLayout(
             model: model,
@@ -148,15 +164,31 @@ public enum ReportRenderer {
             pageHeightPt: pageHeightPt,
             headerBaselineYPt: headerBaselineYPt,
             solidRuleYPt: solidRuleYPt,
-            dashedRuleYPt: dashedRuleYPt,
+            dashedTopYPt: dashedTopYPt,
+            dashedBottomYPt: dashedBottomYPt,
             bodyStartYPt: bodyStartYPt,
             caseLineHeightPt: caseBlockHeightPt,
             caseDetailOffsetPt: caseDetailOffsetPt,
             grayTopYPt: grayTopYPt,
             grayHeightPt: grayHeightPt,
             grid: grid,
-            images: images
+            images: images,
+            dateFontSizePt: dateFontSizePt,
+            dateText: dateText
         )
+    }
+
+    static func fittedFontSize(text: String, weight: FontWeight, baseSize: Double, maxWidth: Double) -> Double {
+        guard !text.isEmpty, maxWidth > 0 else { return baseSize }
+        let ctFont = CTFontCreateWithName(weight.postScriptName as CFString, CGFloat(baseSize), nil)
+        let attrs: [CFString: Any] = [kCTFontAttributeName: ctFont]
+        guard let attr = CFAttributedStringCreate(kCFAllocatorDefault, text as CFString, attrs as CFDictionary) else {
+            return baseSize
+        }
+        let line = CTLineCreateWithAttributedString(attr)
+        let width = CTLineGetTypographicBounds(line, nil, nil, nil)
+        if width <= maxWidth || width == 0 { return baseSize }
+        return baseSize * maxWidth / width
     }
 
     // MARK: - Drawing
@@ -173,7 +205,6 @@ public enum ReportRenderer {
 
     private static func drawHeader(layout: PreparedLayout, in context: CGContext, pageHeight: Double) {
         let y = CGFloat(pageHeight - layout.headerBaselineYPt)
-        let dateText = formatHeaderDate(layout.model.date)
 
         drawText(
             "名前",
@@ -190,9 +221,9 @@ public enum ReportRenderer {
             context: context
         )
         drawText(
-            dateText,
+            layout.dateText,
             at: CGPoint(x: 295.1, y: y),
-            fontSize: LayoutConstants.headerFontSizePt,
+            fontSize: layout.dateFontSizePt,
             weight: .w3,
             context: context
         )
@@ -207,11 +238,15 @@ public enum ReportRenderer {
         context.addLine(to: CGPoint(x: CGFloat(layout.pageWidthPt), y: solidY))
         context.strokePath()
 
-        context.setLineWidth(0.75)
         context.setLineDash(phase: 0, lengths: [3.75, 3.75])
-        let dashedY = CGFloat(pageHeight - layout.dashedRuleYPt)
-        context.move(to: CGPoint(x: 0, y: dashedY))
-        context.addLine(to: CGPoint(x: CGFloat(layout.pageWidthPt), y: dashedY))
+        let dashedTop = CGFloat(pageHeight - layout.dashedTopYPt)
+        context.move(to: CGPoint(x: 0, y: dashedTop))
+        context.addLine(to: CGPoint(x: CGFloat(layout.pageWidthPt), y: dashedTop))
+        context.strokePath()
+
+        let dashedBottom = CGFloat(pageHeight - layout.dashedBottomYPt)
+        context.move(to: CGPoint(x: 0, y: dashedBottom))
+        context.addLine(to: CGPoint(x: CGFloat(layout.pageWidthPt), y: dashedBottom))
         context.strokePath()
         context.restoreGState()
     }
@@ -357,7 +392,7 @@ public enum ReportRenderer {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "ja_JP")
         formatter.calendar = Calendar(identifier: .gregorian)
-        formatter.dateFormat = "yyyy年M月d日(EEEEE) 画像報告"
+        formatter.dateFormat = "M/d'（'EEEEE'）　画像報告'"
         return formatter.string(from: date)
     }
 

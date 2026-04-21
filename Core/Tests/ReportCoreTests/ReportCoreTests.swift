@@ -160,12 +160,30 @@ final class ReportRendererTests: XCTestCase {
         XCTAssertEqual(data[3], 0x47)
     }
 
-    func testHeaderDateFormatIsJapanese() {
-        let date = Date(timeIntervalSince1970: 1_745_193_600) // 2025-04-21 UTC (rough)
+    func testHeaderDateFormatShort() {
+        // 2026-04-21 JST (Tue)
+        var comps = DateComponents()
+        comps.year = 2026
+        comps.month = 4
+        comps.day = 21
+        comps.hour = 12
+        var cal = Calendar(identifier: .gregorian)
+        cal.locale = Locale(identifier: "ja_JP")
+        cal.timeZone = TimeZone(identifier: "Asia/Tokyo") ?? .current
+        let date = cal.date(from: comps)!
+
         let s = ReportRenderer.formatHeaderDate(date)
         XCTAssertTrue(s.contains("画像報告"))
-        XCTAssertTrue(s.contains("年"))
-        XCTAssertTrue(s.contains("月"))
-        XCTAssertTrue(s.contains("日"))
+        XCTAssertTrue(s.contains("4/21"))
+        XCTAssertTrue(s.contains("（"))
+        XCTAssertTrue(s.contains("）"))
+        XCTAssertFalse(s.contains("年"))
+        XCTAssertFalse(s.contains("月"))
+        // 曜日は単一文字漢字
+        let weekdayChars: Set<Character> = ["月", "火", "水", "木", "金", "土", "日"]
+        let weekdayPresent = s.contains { weekdayChars.contains($0) }
+        XCTAssertTrue(weekdayPresent, "曜日1文字(月火水木金土日)が含まれるべき: \(s)")
+        // 2026-04-21 は火曜日
+        XCTAssertTrue(s.contains("火"))
     }
 }
