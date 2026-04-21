@@ -15,13 +15,38 @@ final class ReportViewModel: ObservableObject {
     @Published var lastErrorMessage: String?
 
     @Published var exportFormat: ExportFormat
-    @Published var fileName: String
+
+    // W3-F: ファイル名構成
+    @Published var useDateInName: Bool
+    @Published var dateFormat: DateFormatOption
+    @Published var useFreeTextInName: Bool
+    @Published var freeText: String
+
+    // W3-E: 保存先
+    @Published var saveDirectoryURL: URL
+
+    // W3-H: 書き出し中フラグ
+    @Published var isExporting: Bool = false
+
+    // W3-G: プレビュー倍率
+    @Published var previewZoom: Double
 
     private let preferences: UserPreferences
+    private let appPreferences: AppPreferences
     private var previewTask: Task<Void, Never>?
+    private var debounceTask: Task<Void, Never>?
 
-    init(preferences: UserPreferences = .shared) {
+    private static let previewDebounceNanos: UInt64 = 300_000_000
+    nonisolated static let previewDpi: Double = 72.0
+    nonisolated static let exportDpi: Double = 150.0
+
+    init(
+        preferences: UserPreferences = .shared,
+        appPreferences: AppPreferences = .shared
+    ) {
         self.preferences = preferences
+        self.appPreferences = appPreferences
+
         self.authorName = preferences.authorName
         self.date = Date()
         self.cases = [ReportCase(title: "", detail: "")]
@@ -29,7 +54,14 @@ final class ReportViewModel: ObservableObject {
 
         let savedFormat = preferences.lastExportFormat.flatMap { ExportFormat(rawValue: $0) } ?? .jpg
         self.exportFormat = savedFormat
-        self.fileName = preferences.lastFileName ?? Self.defaultFileName(for: Date(), format: savedFormat)
+
+        self.useDateInName = appPreferences.useDateInName
+        self.dateFormat = DateFormatOption(rawValue: appPreferences.dateFormatKey) ?? .yyMMdd
+        self.useFreeTextInName = appPreferences.useFreeTextInName
+        self.freeText = appPreferences.freeText
+
+        self.saveDirectoryURL = Self.resolveInitialSaveDirectory(preferences: preferences)
+        self.previewZoom = appPreferences.previewZoom
     }
 
     // MARK: - Derived
@@ -90,9 +122,22 @@ final class ReportViewModel: ObservableObject {
         imageURLs.removeAll { $0 == url }
     }
 
-    // MARK: - Preview rendering
+    // MARK: - Preview rendering (W3-H debounced)
 
-    func refreshPreview() {
+    func requestPreviewRefresh() {
+        debounceTask?.cancel()
+        debounceTask = Task { [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: Self.previewDebounceNanos)
+            } catch {
+                return
+            }
+            if Task.isCancelled { return }
+            await MainActor.run { self?.refreshPreviewNow() }
+        }
+    }
+
+    func refreshPreviewNow() {
         previewTask?.cancel()
         let model = currentModel
         previewTask = Task { [weak self] in
@@ -109,54 +154,122 @@ final class ReportViewModel: ObservableObject {
         await Task.detached(priority: .userInitiated) { () -> Data? in
             try? ReportRenderer.render(
                 model: model,
-                options: RenderOptions(format: .png)
+                options: RenderOptions(format: .png, dpi: previewDpi)
             )
         }.value
     }
 
-    // MARK: - Export
+    // MARK: - Save directory (W3-E)
 
-    func updateFileNameDefaultIfNeeded() {
-        let auto = Self.defaultFileName(for: date, format: exportFormat)
-        if fileName.isEmpty {
-            fileName = auto
-        } else if let stem = Self.baseName(fileName),
-                  Self.looksLikeDateStem(stem) {
-            fileName = auto
-        } else {
-            fileName = Self.replaceExtension(fileName, with: exportFormat.rawValue)
-        }
-    }
-
-    func export() {
-        lastErrorMessage = nil
-        let saveDir = resolveSaveDirectory()
-        let name = fileName.isEmpty ? Self.defaultFileName(for: date, format: exportFormat) : fileName
-        let url = saveDir.appendingPathComponent(Self.replaceExtension(name, with: exportFormat.rawValue))
-
-        do {
-            let data = try ReportRenderer.render(
-                model: currentModel,
-                options: RenderOptions(format: exportFormat)
-            )
-            try data.write(to: url, options: .atomic)
-            lastExportURL = url
-
-            preferences.lastFileName = url.lastPathComponent
-            preferences.lastExportFormat = exportFormat.rawValue
-            if let bookmark = try? saveDir.bookmarkData(
+    func changeSaveDirectory() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.prompt = "選択"
+        panel.message = "保存先フォルダを選択"
+        panel.directoryURL = saveDirectoryURL
+        if panel.runModal() == .OK, let url = panel.url {
+            saveDirectoryURL = url
+            if let bookmark = try? url.bookmarkData(
                 options: [],
                 includingResourceValuesForKeys: nil,
                 relativeTo: nil
             ) {
                 preferences.lastSaveDirectoryBookmark = bookmark
             }
-        } catch {
-            lastErrorMessage = "書き出し失敗: \(error.localizedDescription)"
         }
     }
 
-    private func resolveSaveDirectory() -> URL {
+    // MARK: - File name (W3-F)
+
+    var composedFileNameStem: String {
+        let dateStem = useDateInName ? dateFormat.format(date) : ""
+        let text = useFreeTextInName ? sanitize(freeText) : ""
+
+        if !dateStem.isEmpty, !text.isEmpty {
+            return "\(dateStem)_\(text)"
+        }
+        if !dateStem.isEmpty { return dateStem }
+        if !text.isEmpty { return text }
+        return dateFormat.format(date) // フォールバック: 日付のみ
+    }
+
+    var composedFileName: String {
+        "\(composedFileNameStem).\(exportFormat.rawValue)"
+    }
+
+    func persistFileNamePreferences() {
+        appPreferences.useDateInName = useDateInName
+        appPreferences.dateFormatKey = dateFormat.rawValue
+        appPreferences.useFreeTextInName = useFreeTextInName
+        appPreferences.freeText = freeText
+    }
+
+    // MARK: - Zoom (W3-G)
+
+    func persistZoom() {
+        appPreferences.previewZoom = previewZoom
+    }
+
+    // MARK: - Export (W3-H: background + isExporting)
+
+    func export() {
+        guard !isExporting else { return }
+        lastErrorMessage = nil
+
+        let model = currentModel
+        let format = exportFormat
+        let url = saveDirectoryURL.appendingPathComponent(composedFileName)
+
+        isExporting = true
+
+        Task { [weak self] in
+            let result = await Self.performExport(model: model, format: format, url: url)
+            await MainActor.run {
+                guard let self else { return }
+                self.isExporting = false
+                switch result {
+                case .success(let saved):
+                    self.lastExportURL = saved
+                    self.preferences.lastFileName = saved.lastPathComponent
+                    self.preferences.lastExportFormat = format.rawValue
+                    if let bookmark = try? self.saveDirectoryURL.bookmarkData(
+                        options: [],
+                        includingResourceValuesForKeys: nil,
+                        relativeTo: nil
+                    ) {
+                        self.preferences.lastSaveDirectoryBookmark = bookmark
+                    }
+                case .failure(let error):
+                    self.lastErrorMessage = "書き出し失敗: \(error.localizedDescription)"
+                }
+            }
+        }
+    }
+
+    private static func performExport(
+        model: ReportModel,
+        format: ExportFormat,
+        url: URL
+    ) async -> Result<URL, Error> {
+        await Task.detached(priority: .userInitiated) { () -> Result<URL, Error> in
+            do {
+                let data = try ReportRenderer.render(
+                    model: model,
+                    options: RenderOptions(format: format, dpi: exportDpi)
+                )
+                try data.write(to: url, options: .atomic)
+                return .success(url)
+            } catch {
+                return .failure(error)
+            }
+        }.value
+    }
+
+    // MARK: - Helpers
+
+    private static func resolveInitialSaveDirectory(preferences: UserPreferences) -> URL {
         if let bookmark = preferences.lastSaveDirectoryBookmark {
             var isStale = false
             if let url = try? URL(
@@ -172,28 +285,9 @@ final class ReportViewModel: ObservableObject {
             ?? FileManager.default.homeDirectoryForCurrentUser
     }
 
-    // MARK: - File name helpers
-
-    static func defaultFileName(for date: Date, format: ExportFormat) -> String {
-        let f = DateFormatter()
-        f.locale = Locale(identifier: "ja_JP")
-        f.calendar = Calendar(identifier: .gregorian)
-        f.dateFormat = "yyMMdd"
-        return "\(f.string(from: date)).\(format.rawValue)"
-    }
-
-    private static func baseName(_ name: String) -> String? {
-        guard let dot = name.lastIndex(of: ".") else { return name }
-        return String(name[..<dot])
-    }
-
-    private static func looksLikeDateStem(_ stem: String) -> Bool {
-        guard stem.count == 6 else { return false }
-        return stem.allSatisfy { $0.isNumber }
-    }
-
-    private static func replaceExtension(_ name: String, with ext: String) -> String {
-        guard let dot = name.lastIndex(of: ".") else { return "\(name).\(ext)" }
-        return String(name[..<dot]) + "." + ext
+    private func sanitize(_ text: String) -> String {
+        let invalid: Set<Character> = ["/", "\\", ":", "*", "?", "\"", "<", ">", "|"]
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return String(trimmed.filter { !invalid.contains($0) })
     }
 }
