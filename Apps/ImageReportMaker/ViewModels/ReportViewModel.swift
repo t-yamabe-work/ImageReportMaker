@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import Combine
 import UniformTypeIdentifiers
 import ReportCore
 
@@ -31,10 +32,14 @@ final class ReportViewModel: ObservableObject {
     // W3-G: プレビュー倍率
     @Published var previewZoom: Double
 
+    // W3-K: 衝突ポリシー
+    @Published var collisionPolicy: FileCollisionPolicy
+
     private let preferences: UserPreferences
     private let appPreferences: AppPreferences
     private var previewTask: Task<Void, Never>?
     private var debounceTask: Task<Void, Never>?
+    private var cancellables = Set<AnyCancellable>()
 
     private static let previewDebounceNanos: UInt64 = 300_000_000
 
@@ -47,7 +52,10 @@ final class ReportViewModel: ObservableObject {
 
         self.authorName = preferences.authorName
         self.date = Date()
-        self.cases = [ReportCase(title: "", detail: "")]
+        // W3-I + W3-J: 一番上の案件を復元（保存済みがあれば、なければデフォルト文言）
+        let restoredTitle = appPreferences.topCaseTitle ?? ""
+        let restoredDetail = appPreferences.topCaseDetail ?? AppPreferences.defaultCaseDetail
+        self.cases = [ReportCase(title: restoredTitle, detail: restoredDetail)]
         self.imageURLs = []
 
         let savedFormat = preferences.lastExportFormat.flatMap { ExportFormat(rawValue: $0) } ?? .jpg
@@ -60,6 +68,9 @@ final class ReportViewModel: ObservableObject {
 
         self.saveDirectoryURL = Self.resolveInitialSaveDirectory(preferences: preferences)
         self.previewZoom = appPreferences.previewZoom
+        self.collisionPolicy = appPreferences.collisionPolicy
+
+        bindTopCasePersistence()
     }
 
     // MARK: - Derived
@@ -90,18 +101,31 @@ final class ReportViewModel: ObservableObject {
     // MARK: - Cases
 
     func addCase() {
-        cases.append(ReportCase(title: "", detail: ""))
+        // W3-I: 追加ケースも同じデフォルト文言で始める
+        cases.append(ReportCase(title: "", detail: AppPreferences.defaultCaseDetail))
     }
 
     func removeCase(at offsets: IndexSet) {
         cases.remove(atOffsets: offsets)
         if cases.isEmpty {
-            cases.append(ReportCase(title: "", detail: ""))
+            cases.append(ReportCase(title: "", detail: AppPreferences.defaultCaseDetail))
         }
     }
 
     func moveCase(from source: IndexSet, to destination: Int) {
         cases.move(fromOffsets: source, toOffset: destination)
+    }
+
+    // W3-J: cases[0] の変更を監視して永続化
+    private func bindTopCasePersistence() {
+        $cases
+            .dropFirst()
+            .sink { [weak self] newCases in
+                guard let self, let first = newCases.first else { return }
+                self.appPreferences.topCaseTitle = first.title
+                self.appPreferences.topCaseDetail = first.detail
+            }
+            .store(in: &cancellables)
     }
 
     // MARK: - Images
@@ -210,20 +234,29 @@ final class ReportViewModel: ObservableObject {
         appPreferences.previewZoom = previewZoom
     }
 
-    // MARK: - Export (W3-H: background + isExporting)
+    // MARK: - Collision (W3-K)
+
+    func persistCollisionPolicy() {
+        appPreferences.collisionPolicy = collisionPolicy
+    }
+
+    // MARK: - Export (W3-H: background + isExporting, W3-K: 衝突処理)
 
     func export() {
         guard !isExporting else { return }
         lastErrorMessage = nil
 
+        let baseURL = saveDirectoryURL.appendingPathComponent(composedFileName)
+        guard let finalURL = resolveExportURL(base: baseURL) else {
+            return
+        }
+
         let model = currentModel
         let format = exportFormat
-        let url = saveDirectoryURL.appendingPathComponent(composedFileName)
-
         isExporting = true
 
         Task { [weak self] in
-            let result = await Self.performExport(model: model, format: format, url: url)
+            let result = await Self.performExport(model: model, format: format, url: finalURL)
             await MainActor.run {
                 guard let self else { return }
                 self.isExporting = false
@@ -244,6 +277,49 @@ final class ReportViewModel: ObservableObject {
                 }
             }
         }
+    }
+
+    // W3-K: ポリシーに応じた最終 URL を返す。キャンセル時は nil。
+    private func resolveExportURL(base: URL) -> URL? {
+        guard FileManager.default.fileExists(atPath: base.path) else { return base }
+        switch collisionPolicy {
+        case .overwrite:
+            return base
+        case .sequential:
+            return Self.nextAvailableURL(base: base)
+        case .warn:
+            let alert = NSAlert()
+            alert.alertStyle = .warning
+            alert.messageText = "同名ファイルがあります"
+            alert.informativeText = "\(base.lastPathComponent) は既に存在します。どうしますか？"
+            alert.addButton(withTitle: "上書き")
+            alert.addButton(withTitle: "連番で保存")
+            alert.addButton(withTitle: "キャンセル")
+            switch alert.runModal() {
+            case .alertFirstButtonReturn:
+                return base
+            case .alertSecondButtonReturn:
+                return Self.nextAvailableURL(base: base)
+            default:
+                lastErrorMessage = "書き出しキャンセル"
+                return nil
+            }
+        }
+    }
+
+    private static func nextAvailableURL(base: URL) -> URL {
+        let dir = base.deletingLastPathComponent()
+        let ext = base.pathExtension
+        let stem = base.deletingPathExtension().lastPathComponent
+        var n = 2
+        while n < 10_000 {
+            let candidate = dir.appendingPathComponent("\(stem)_\(n).\(ext)")
+            if !FileManager.default.fileExists(atPath: candidate.path) {
+                return candidate
+            }
+            n += 1
+        }
+        return base
     }
 
     private static func performExport(
