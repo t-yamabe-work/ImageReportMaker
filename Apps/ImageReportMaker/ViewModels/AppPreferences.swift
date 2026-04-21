@@ -4,6 +4,9 @@ import Foundation
 final class AppPreferences: @unchecked Sendable {
     static let shared = AppPreferences()
 
+    /// 詳細文のデフォルト文言（W3-I）
+    static let defaultCaseDetail: String = "を進行いたしました。"
+
     private let defaults: UserDefaults
 
     private enum Key {
@@ -12,6 +15,9 @@ final class AppPreferences: @unchecked Sendable {
         static let useFreeTextInName = "useFreeTextInName"
         static let freeText = "freeText"
         static let previewZoom = "previewZoom"
+        static let topCaseTitle = "topCaseTitle"
+        static let topCaseDetail = "topCaseDetail"
+        static let collisionPolicy = "collisionPolicy"
     }
 
     init(defaults: UserDefaults = .standard) {
@@ -48,6 +54,25 @@ final class AppPreferences: @unchecked Sendable {
         }
         set { defaults.set(newValue, forKey: Key.previewZoom) }
     }
+
+    // W3-J: 一番上の案件を記憶
+    var topCaseTitle: String? {
+        get { defaults.string(forKey: Key.topCaseTitle) }
+        set { defaults.set(newValue, forKey: Key.topCaseTitle) }
+    }
+
+    var topCaseDetail: String? {
+        get { defaults.string(forKey: Key.topCaseDetail) }
+        set { defaults.set(newValue, forKey: Key.topCaseDetail) }
+    }
+
+    // W3-K: 同名ファイル衝突時の挙動
+    var collisionPolicy: FileCollisionPolicy {
+        get {
+            FileCollisionPolicy(rawValue: defaults.string(forKey: Key.collisionPolicy) ?? "") ?? .warn
+        }
+        set { defaults.set(newValue.rawValue, forKey: Key.collisionPolicy) }
+    }
 }
 
 enum DateFormatOption: String, CaseIterable, Identifiable, Sendable {
@@ -75,5 +100,21 @@ enum DateFormatOption: String, CaseIterable, Identifiable, Sendable {
         f.calendar = Calendar(identifier: .gregorian)
         f.dateFormat = rawValue
         return f.string(from: date)
+    }
+}
+
+enum FileCollisionPolicy: String, CaseIterable, Identifiable, Sendable {
+    case overwrite
+    case warn
+    case sequential
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .overwrite: return "上書き"
+        case .warn: return "警告"
+        case .sequential: return "連番"
+        }
     }
 }
