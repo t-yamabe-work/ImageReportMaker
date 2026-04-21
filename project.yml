@@ -1,0 +1,81 @@
+# =========================================================
+# 画像報告書メーカー — xcodegen 定義
+# Core SPM (ReportCore) を依存として参照するシングルターゲット構成
+#   - ImageReportMaker (メインアプリ / 画像報告書メーカー.app)
+#     ・PRODUCT_NAME はASCII固定
+#     ・表示名は CFBundleDisplayName で「画像報告書メーカー」
+# このファイルが真実のソース。`.xcodeproj` は生成物。
+# =========================================================
+
+name: ImageReportMaker
+
+options:
+  deploymentTarget:
+    macOS: "13.0"
+  createIntermediateGroups: true
+  groupSortPosition: top
+  developmentLanguage: ja
+  defaultConfig: Debug
+  generateEmptyDirectories: true
+
+configs:
+  Debug: debug
+  Release: release
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    MACOSX_DEPLOYMENT_TARGET: "13.0"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    DEVELOPMENT_TEAM: ""
+    CODE_SIGN_STYLE: Automatic
+    CODE_SIGN_IDENTITY: "-"
+    ENABLE_HARDENED_RUNTIME: YES
+    COMBINE_HIDPI_IMAGES: YES
+    SWIFT_STRICT_CONCURRENCY: complete
+
+packages:
+  ReportCore:
+    path: Core
+
+targets:
+  ImageReportMaker:
+    type: application
+    platform: macOS
+    sources:
+      - path: Apps/ImageReportMaker
+    dependencies:
+      - package: ReportCore
+    info:
+      path: Apps/ImageReportMaker/Info.plist
+      properties:
+        CFBundleDisplayName: 画像報告書メーカー
+        CFBundleName: $(PRODUCT_NAME)
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSApplicationCategoryType: public.app-category.productivity
+        NSHumanReadableCopyright: "© 2026 ImageReportMaker"
+        NSPrincipalClass: NSApplication
+        NSHighResolutionCapable: true
+    entitlements:
+      path: Apps/ImageReportMaker/ImageReportMaker.entitlements
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.tyamabe.imagereportmaker
+        PRODUCT_NAME: ImageReportMaker
+        GENERATE_INFOPLIST_FILE: NO
+
+schemes:
+  ImageReportMaker:
+    build:
+      targets:
+        ImageReportMaker: all
+    run:
+      config: Debug
+    profile:
+      config: Release
+    analyze:
+      config: Debug
+    archive:
+      config: Release

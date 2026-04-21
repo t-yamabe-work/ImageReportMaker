@@ -1,0 +1,54 @@
+# =========================================================
+# 画像報告書メーカー .gitignore
+# =========================================================
+
+# --- macOS ---
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+
+# --- ビルド成果物 ---
+build/
+.build/
+DerivedData/
+*.xcarchive
+*.ipa
+*.dSYM.zip
+*.dSYM
+dist/
+
+# --- Xcode ユーザー固有ファイル ---
+xcuserdata/
+*.xcworkspace/xcuserdata/
+*.xcodeproj/xcuserdata/
+*.xcodeproj/project.xcworkspace/xcuserdata/
+*.xcuserstate
+*.moved-aside
+*.perspectivev3
+
+# --- Xcode生成プロジェクト（project.yml が真実のソース） ---
+/ImageReportMaker.xcodeproj/
+!/ImageReportMaker.xcodeproj/xcshareddata/
+!/ImageReportMaker.xcodeproj/xcshareddata/**
+
+# --- Swift Package Manager ---
+.swiftpm/
+Packages/
+Package.pins
+
+# --- その他 ---
+*.log
+*.tmp
+.env
+.env.local
+
+# --- ローカル検証用 ---
+.verify/
+
+# --- 社内機密画像（絶対漏らさない） ---
+# 開発用の実画像は Fixtures/secret/ に置き、リポジトリには含めない
+Fixtures/secret/
+*.private.png
+*.private.jpg
+*.private.jpeg
