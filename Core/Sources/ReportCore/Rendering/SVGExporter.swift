@@ -49,13 +49,24 @@ public enum SVGExporter {
 
         // Body
         let leftPt = LayoutConstants.contentMarginXMm * mm
-        let displayCases = layout.model.cases.isEmpty ? [ReportCase(title: "", detail: "")] : layout.model.cases
-        for (idx, c) in displayCases.enumerated() {
-            let top = layout.bodyStartYPt + Double(idx) * layout.caseLineHeightPt
-            let titleY = top + LayoutConstants.caseTitleFontSizePt * 0.8
-            let detailY = top + layout.caseDetailOffsetPt + LayoutConstants.caseDetailFontSizePt * 0.8
-            svg += textElement("●" + c.title, x: leftPt, y: titleY, size: LayoutConstants.caseTitleFontSizePt, cls: "t-w6")
-            svg += textElement("→" + c.detail, x: leftPt + 10, y: detailY, size: LayoutConstants.caseDetailFontSizePt, cls: "t-w3")
+        for block in layout.cases {
+            svg += textElement(
+                block.titleString,
+                x: leftPt,
+                y: block.titleBaselineYPt,
+                size: LayoutConstants.caseTitleFontSizePt,
+                cls: "t-w6"
+            )
+            for (i, wl) in block.detailLines.enumerated() {
+                let baselineY = block.detailFirstBaselineYPt + Double(i) * block.detailLineHeightPt
+                svg += textElement(
+                    wl.text,
+                    x: leftPt + wl.indentPt,
+                    y: baselineY,
+                    size: LayoutConstants.caseDetailFontSizePt,
+                    cls: "t-w3"
+                )
+            }
         }
 
         // Images

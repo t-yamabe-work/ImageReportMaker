@@ -15,10 +15,20 @@ public struct RenderOptions: Sendable {
     public let dpi: Double
     public let jpegQuality: Double
 
-    public init(format: ExportFormat, dpi: Double = 72.0, jpegQuality: Double = 0.92) {
+    public init(format: ExportFormat, dpi: Double = 150.0, jpegQuality: Double = 0.92) {
         self.format = format
         self.dpi = dpi
         self.jpegQuality = jpegQuality
+    }
+
+    /// 書き出し用プリセット（150dpi、高品質）。
+    public static func export(format: ExportFormat, jpegQuality: Double = 0.92) -> RenderOptions {
+        RenderOptions(format: format, dpi: 150.0, jpegQuality: jpegQuality)
+    }
+
+    /// プレビュー用プリセット（72dpi、ウィンドウ内表示用）。
+    public static func preview(format: ExportFormat = .jpg) -> RenderOptions {
+        RenderOptions(format: format, dpi: 72.0, jpegQuality: 0.85)
     }
 }
 
@@ -61,7 +71,6 @@ public enum ReportRenderer {
         }
 
         context.scaleBy(x: scale, y: scale)
-        // Fill white background
         context.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1))
         context.fill(CGRect(x: 0, y: 0, width: layout.pageWidthPt, height: layout.pageHeightPt))
 
@@ -74,7 +83,22 @@ public enum ReportRenderer {
         return try encode(cgImage: cgImage, format: options.format, quality: options.jpegQuality)
     }
 
-    // MARK: - Layout preparation
+    // MARK: - Layout types
+
+    struct WrappedLine: Sendable {
+        let text: String
+        let indentPt: Double
+    }
+
+    struct CaseBlock: Sendable {
+        let titleString: String
+        let detailLines: [WrappedLine]
+        let topYPt: Double
+        let titleBaselineYPt: Double
+        let detailFirstBaselineYPt: Double
+        let detailLineHeightPt: Double
+        let totalHeightPt: Double
+    }
 
     struct PreparedLayout {
         let model: ReportModel
@@ -85,8 +109,7 @@ public enum ReportRenderer {
         let dashedTopYPt: Double
         let dashedBottomYPt: Double
         let bodyStartYPt: Double
-        let caseLineHeightPt: Double
-        let caseDetailOffsetPt: Double
+        let cases: [CaseBlock]
         let grayTopYPt: Double
         let grayHeightPt: Double
         let grid: GridLayoutResult
@@ -112,7 +135,6 @@ public enum ReportRenderer {
             else {
                 throw ReportRenderError.imageLoadFailed(url)
             }
-            // Treat 1 pixel = 1 pt (72 dpi convention) for aspect-ratio preservation.
             let widthPt = Double(cg.width)
             let heightPt = Double(cg.height)
             images.append(
@@ -127,17 +149,52 @@ public enum ReportRenderer {
         let imageSizes = images.map { ImageSize(widthMm: $0.widthMm, heightMm: $0.heightMm) }
         let grid = GridLayoutCalculator.calculate(imageSizes: imageSizes)
 
-        // Header geometry from layout-spec.md
         let headerBaselineYPt: Double = 40.0
         let solidRuleYPt: Double = 51.44
 
         let bodyStartYPt: Double = solidRuleYPt + 15.0
-        let caseDetailOffsetPt: Double = 38.13
-        let caseBlockHeightPt: Double = caseDetailOffsetPt + LayoutConstants.caseDetailFontSizePt + 10.0
+        let contentWidthPt = (LayoutConstants.a4WidthMm - LayoutConstants.contentMarginXMm * 2) * mm
+        let detailLineHeightPt = LayoutConstants.caseDetailFontSizePt * LayoutConstants.caseDetailLineHeightMultiple
+        let titleFontSize = LayoutConstants.caseTitleFontSizePt
+        let detailFontSize = LayoutConstants.caseDetailFontSizePt
+        let arrowWidthPt = measureLineWidth(text: "→", fontSize: detailFontSize, weight: .w3)
 
-        let caseCount = max(model.cases.count, 1)
-        let bodyBottomPt = bodyStartYPt + Double(caseCount) * caseBlockHeightPt
+        let inputCases = model.cases.isEmpty ? [ReportCase(title: "", detail: "")] : model.cases
+        var caseBlocks: [CaseBlock] = []
+        var currentY = bodyStartYPt
+        let caseBottomPaddingPt: Double = 10.0
+        for c in inputCases {
+            let titleString = "●" + c.title
+            let detailSource = "→" + c.detail
+            let detailLines = wrapText(
+                detailSource,
+                fontSize: detailFontSize,
+                weight: .w3,
+                contentWidthPt: contentWidthPt,
+                firstLineIndentPt: 0,
+                continuedIndentPt: arrowWidthPt
+            )
+            let titleBaselineYPt = currentY + titleFontSize * 0.8
+            let detailFirstBaselineYPt = currentY + LayoutConstants.caseDetailOffsetPt + detailFontSize * 0.8
+            let detailLinesCount = max(detailLines.count, 1)
+            let detailBottomYPt = detailFirstBaselineYPt + Double(detailLinesCount - 1) * detailLineHeightPt + detailFontSize * 0.2
+            let totalHeightPt = detailBottomYPt - currentY + caseBottomPaddingPt
 
+            caseBlocks.append(
+                CaseBlock(
+                    titleString: titleString,
+                    detailLines: detailLines,
+                    topYPt: currentY,
+                    titleBaselineYPt: titleBaselineYPt,
+                    detailFirstBaselineYPt: detailFirstBaselineYPt,
+                    detailLineHeightPt: detailLineHeightPt,
+                    totalHeightPt: totalHeightPt
+                )
+            )
+            currentY += totalHeightPt
+        }
+
+        let bodyBottomPt = currentY
         let grayTopYPt = bodyBottomPt + LayoutConstants.textToBlockGapMm * mm
         let grayHeightPt = grid.totalBlockHeightMm * mm
         let dashedTopYPt = grayTopYPt
@@ -146,7 +203,6 @@ public enum ReportRenderer {
         let bottomPaddingPt: Double = 30.0
         let pageHeightPt = grayTopYPt + grayHeightPt + bottomPaddingPt
 
-        // Date text with shrink-to-fit
         let dateText = formatHeaderDate(model.date)
         let dateXPt: Double = 295.1
         let rightPaddingPt: Double = 8.0
@@ -167,8 +223,7 @@ public enum ReportRenderer {
             dashedTopYPt: dashedTopYPt,
             dashedBottomYPt: dashedBottomYPt,
             bodyStartYPt: bodyStartYPt,
-            caseLineHeightPt: caseBlockHeightPt,
-            caseDetailOffsetPt: caseDetailOffsetPt,
+            cases: caseBlocks,
             grayTopYPt: grayTopYPt,
             grayHeightPt: grayHeightPt,
             grid: grid,
@@ -178,24 +233,68 @@ public enum ReportRenderer {
         )
     }
 
-    static func fittedFontSize(text: String, weight: FontWeight, baseSize: Double, maxWidth: Double) -> Double {
-        guard !text.isEmpty, maxWidth > 0 else { return baseSize }
-        let ctFont = CTFontCreateWithName(weight.postScriptName as CFString, CGFloat(baseSize), nil)
-        let attrs: [CFString: Any] = [kCTFontAttributeName: ctFont]
+    // MARK: - Text metrics helpers
+
+    static func measureLineWidth(text: String, fontSize: Double, weight: FontWeight) -> Double {
+        guard !text.isEmpty else { return 0 }
+        let font = CTFontCreateWithName(weight.postScriptName as CFString, CGFloat(fontSize), nil)
+        let attrs: [CFString: Any] = [kCTFontAttributeName: font]
         guard let attr = CFAttributedStringCreate(kCFAllocatorDefault, text as CFString, attrs as CFDictionary) else {
-            return baseSize
+            return 0
         }
         let line = CTLineCreateWithAttributedString(attr)
-        let width = CTLineGetTypographicBounds(line, nil, nil, nil)
-        if width <= maxWidth || width == 0 { return baseSize }
-        return baseSize * maxWidth / width
+        return Double(CTLineGetTypographicBounds(line, nil, nil, nil))
+    }
+
+    static func fittedFontSize(text: String, weight: FontWeight, baseSize: Double, maxWidth: Double) -> Double {
+        guard !text.isEmpty, maxWidth > 0 else { return baseSize }
+        let w = measureLineWidth(text: text, fontSize: baseSize, weight: weight)
+        if w <= maxWidth || w == 0 { return baseSize }
+        return baseSize * maxWidth / w
+    }
+
+    /// 指定幅内で行送りする。1行目とそれ以降でインデントを変えられる（ハンギングインデント）。
+    static func wrapText(
+        _ text: String,
+        fontSize: Double,
+        weight: FontWeight,
+        contentWidthPt: Double,
+        firstLineIndentPt: Double,
+        continuedIndentPt: Double
+    ) -> [WrappedLine] {
+        guard !text.isEmpty else { return [] }
+        let font = CTFontCreateWithName(weight.postScriptName as CFString, CGFloat(fontSize), nil)
+        let attrs: [CFString: Any] = [kCTFontAttributeName: font]
+        guard let attr = CFAttributedStringCreate(kCFAllocatorDefault, text as CFString, attrs as CFDictionary) else {
+            return [WrappedLine(text: text, indentPt: firstLineIndentPt)]
+        }
+        let typesetter = CTTypesetterCreateWithAttributedString(attr)
+        let ns = text as NSString
+        let totalLength = ns.length
+        var lines: [WrappedLine] = []
+        var start = 0
+        var isFirst = true
+        while start < totalLength {
+            let indent = isFirst ? firstLineIndentPt : continuedIndentPt
+            let available = max(1.0, contentWidthPt - indent)
+            let count = CTTypesetterSuggestLineBreak(typesetter, start, available)
+            if count <= 0 { break }
+            let range = NSRange(location: start, length: min(count, totalLength - start))
+            let slice = ns.substring(with: range)
+            lines.append(WrappedLine(text: slice, indentPt: indent))
+            start += count
+            isFirst = false
+        }
+        if lines.isEmpty {
+            lines.append(WrappedLine(text: text, indentPt: firstLineIndentPt))
+        }
+        return lines
     }
 
     // MARK: - Drawing
 
     private static func draw(layout: PreparedLayout, in context: CGContext) {
         let pageH = layout.pageHeightPt
-
         drawHeader(layout: layout, in: context, pageHeight: pageH)
         drawRules(layout: layout, in: context, pageHeight: pageH)
         drawBody(layout: layout, in: context, pageHeight: pageH)
@@ -253,33 +352,25 @@ public enum ReportRenderer {
 
     private static func drawBody(layout: PreparedLayout, in context: CGContext, pageHeight: Double) {
         let leftPt = LayoutConstants.contentMarginXMm * LayoutConstants.mmPerPoint
-        let cases = layout.model.cases
-        let displayCases: [ReportCase]
-        if cases.isEmpty {
-            displayCases = [ReportCase(title: "", detail: "")]
-        } else {
-            displayCases = cases
-        }
 
-        for (idx, c) in displayCases.enumerated() {
-            let top = layout.bodyStartYPt + Double(idx) * layout.caseLineHeightPt
-            let titleY = CGFloat(pageHeight - top - LayoutConstants.caseTitleFontSizePt * 0.2)
-            let detailY = CGFloat(pageHeight - (top + layout.caseDetailOffsetPt) - LayoutConstants.caseDetailFontSizePt * 0.2)
-
+        for block in layout.cases {
             drawText(
-                "●" + c.title,
-                at: CGPoint(x: leftPt, y: titleY),
+                block.titleString,
+                at: CGPoint(x: leftPt, y: CGFloat(pageHeight - block.titleBaselineYPt)),
                 fontSize: LayoutConstants.caseTitleFontSizePt,
                 weight: .w6,
                 context: context
             )
-            drawText(
-                "→" + c.detail,
-                at: CGPoint(x: leftPt + 10, y: detailY),
-                fontSize: LayoutConstants.caseDetailFontSizePt,
-                weight: .w3,
-                context: context
-            )
+            for (i, wl) in block.detailLines.enumerated() {
+                let baselineY = block.detailFirstBaselineYPt + Double(i) * block.detailLineHeightPt
+                drawText(
+                    wl.text,
+                    at: CGPoint(x: leftPt + wl.indentPt, y: CGFloat(pageHeight - baselineY)),
+                    fontSize: LayoutConstants.caseDetailFontSizePt,
+                    weight: .w3,
+                    context: context
+                )
+            }
         }
     }
 

@@ -160,6 +160,86 @@ final class ReportRendererTests: XCTestCase {
         XCTAssertEqual(data[3], 0x47)
     }
 
+    func testRenderOptionsDefaultDpiIs150() {
+        let opt = RenderOptions(format: .jpg)
+        XCTAssertEqual(opt.dpi, 150.0, accuracy: 0.0001)
+    }
+
+    func testRenderOptionsExportPreset() {
+        let opt = RenderOptions.export(format: .png)
+        XCTAssertEqual(opt.dpi, 150.0, accuracy: 0.0001)
+        XCTAssertEqual(opt.format, .png)
+    }
+
+    func testRenderOptionsPreviewPreset() {
+        let opt = RenderOptions.preview()
+        XCTAssertEqual(opt.dpi, 72.0, accuracy: 0.0001)
+    }
+
+    func testWrapTextLongDetailProducesMultipleLines() {
+        let mm = LayoutConstants.mmPerPoint
+        let contentWidthPt = (LayoutConstants.a4WidthMm - LayoutConstants.contentMarginXMm * 2) * mm
+        // 長文（全角30文字×8行ぶん相当）
+        let detail = String(repeating: "作業用データ作成と製版を進行致しました次の工程に入ります", count: 4)
+        let source = "→" + detail
+        let arrowWidth = ReportRenderer.measureLineWidth(
+            text: "→",
+            fontSize: LayoutConstants.caseDetailFontSizePt,
+            weight: .w3
+        )
+        let lines = ReportRenderer.wrapText(
+            source,
+            fontSize: LayoutConstants.caseDetailFontSizePt,
+            weight: .w3,
+            contentWidthPt: contentWidthPt,
+            firstLineIndentPt: 0,
+            continuedIndentPt: arrowWidth
+        )
+        XCTAssertGreaterThan(lines.count, 1, "long detail should wrap to >1 lines")
+        XCTAssertEqual(lines.first?.indentPt ?? -1, 0, accuracy: 1e-6)
+        XCTAssertGreaterThan(lines[1].indentPt, 0, "continued lines should be indented")
+    }
+
+    func testCaseStackingHeightGrowsWithLongDetail() throws {
+        let shortModel = ReportModel(
+            authorName: "テスト",
+            date: Date(timeIntervalSince1970: 0),
+            cases: [
+                ReportCase(title: "A", detail: "短い"),
+                ReportCase(title: "B", detail: "短い")
+            ],
+            imagePaths: []
+        )
+        let longDetail = String(repeating: "非常に長い詳細テキスト", count: 10)
+        let longModel = ReportModel(
+            authorName: "テスト",
+            date: Date(timeIntervalSince1970: 0),
+            cases: [
+                ReportCase(title: "A", detail: longDetail),
+                ReportCase(title: "B", detail: "短い")
+            ],
+            imagePaths: []
+        )
+        let shortLayout = try ReportRenderer.prepareLayout(model: shortModel)
+        let longLayout = try ReportRenderer.prepareLayout(model: longModel)
+        XCTAssertGreaterThan(longLayout.pageHeightPt, shortLayout.pageHeightPt)
+        XCTAssertGreaterThan(longLayout.cases[0].totalHeightPt, shortLayout.cases[0].totalHeightPt)
+        XCTAssertGreaterThan(longLayout.cases[0].detailLines.count, 1)
+        XCTAssertEqual(shortLayout.cases[0].detailLines.count, 1)
+    }
+
+    func testPreviewAndExportDpiProduceDifferentByteSizes() throws {
+        let model = ReportModel(
+            authorName: "テスト",
+            date: Date(timeIntervalSince1970: 0),
+            cases: [ReportCase(title: "A", detail: "テスト")],
+            imagePaths: []
+        )
+        let preview = try ReportRenderer.render(model: model, options: .preview(format: .png))
+        let export = try ReportRenderer.render(model: model, options: .export(format: .png))
+        XCTAssertGreaterThan(export.count, preview.count)
+    }
+
     func testHeaderDateFormatShort() {
         // 2026-04-21 JST (Tue)
         var comps = DateComponents()
