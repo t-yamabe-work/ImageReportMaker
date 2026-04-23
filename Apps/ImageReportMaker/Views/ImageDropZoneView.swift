@@ -5,12 +5,15 @@ import UniformTypeIdentifiers
 struct ImageDropZoneView: View {
     @ObservedObject var viewModel: ReportViewModel
     @State private var isTargeted = false
+    // V5-1: 内部ドラッグ中の URL を保持する。並び替えロジックの真実はここに置き、
+    //        NSItemProvider はマッチング用の“封筒”としてのみ機能させる。
+    @State private var draggedItem: URL?
 
     // W3-C: .png/.jpeg だけだと一部のシステムで弾かれるため .image と .fileURL も含める
     private let acceptedTypes: [UTType] = [.png, .jpeg, .image, .fileURL]
 
-    // W3-F3: 内部ドラッグ識別用のカスタム UTI（インデックス文字列を運ぶ）
-    private static let internalIndexIdentifier = "com.tyamabe.imagereportmaker.image-index"
+    // V5-1: 内部ドラッグ識別用カスタム UTI（外部 fileURL/image と区別するため独自空間に置く）
+    private static let internalIndexIdentifier = "com.tyamabe.imagereportmaker.internal-image-index"
     private static let internalIndexUTType: UTType = {
         if let t = UTType(internalIndexIdentifier) { return t }
         return UTType(exportedAs: internalIndexIdentifier, conformingTo: .data)
@@ -39,17 +42,21 @@ struct ImageDropZoneView: View {
             if !viewModel.imageURLs.isEmpty {
                 ScrollView(.vertical, showsIndicators: true) {
                     LazyVGrid(columns: columns, alignment: .leading, spacing: 10) {
-                        ForEach(Array(viewModel.imageURLs.enumerated()), id: \.element) { index, url in
-                            thumbnail(for: url, at: index)
+                        ForEach(viewModel.imageURLs, id: \.self) { url in
+                            thumbnail(for: url)
+                                .opacity(draggedItem == url ? 0.35 : 1.0)
                                 .onDrag {
-                                    makeIndexProvider(for: index)
+                                    self.draggedItem = url
+                                    return makeIndexProvider()
+                                } preview: {
+                                    dragPreview(for: url)
                                 }
                                 .onDrop(
                                     of: [Self.internalIndexUTType],
-                                    delegate: ThumbnailDropDelegate(
-                                        targetIndex: index,
+                                    delegate: ReorderDropDelegate(
+                                        targetURL: url,
                                         viewModel: viewModel,
-                                        internalIdentifier: Self.internalIndexIdentifier
+                                        draggedItem: $draggedItem
                                     )
                                 )
                         }
@@ -81,7 +88,7 @@ struct ImageDropZoneView: View {
             .onDrop(of: acceptedTypes, isTargeted: $isTargeted, perform: handleDrop(providers:))
     }
 
-    private func thumbnail(for url: URL, at index: Int) -> some View {
+    private func thumbnail(for url: URL) -> some View {
         ZStack(alignment: .topTrailing) {
             thumbnailImage(for: url)
                 .frame(width: 108, height: 108)
@@ -120,16 +127,32 @@ struct ImageDropZoneView: View {
         }
     }
 
-    // MARK: - Internal drag provider (W3-F3)
+    @ViewBuilder
+    private func dragPreview(for url: URL) -> some View {
+        if let image = NSImage(contentsOf: url) {
+            Image(nsImage: image)
+                .resizable()
+                .scaledToFill()
+                .frame(width: 96, height: 96)
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .shadow(radius: 4)
+        } else {
+            RoundedRectangle(cornerRadius: 6)
+                .fill(Color.secondary.opacity(0.5))
+                .frame(width: 96, height: 96)
+        }
+    }
 
-    private func makeIndexProvider(for index: Int) -> NSItemProvider {
+    // MARK: - Internal drag provider (V5-1)
+
+    private func makeIndexProvider() -> NSItemProvider {
         let provider = NSItemProvider()
-        let payload = "\(index)".data(using: .utf8) ?? Data()
+        // 中身は使わない。マッチング用に内部 UTI で空 Data を載せるだけ。
         provider.registerDataRepresentation(
             forTypeIdentifier: Self.internalIndexIdentifier,
-            visibility: .ownProcess
+            visibility: .all
         ) { completion in
-            completion(payload, nil)
+            completion(Data(), nil)
             return nil
         }
         return provider
@@ -231,32 +254,38 @@ struct ImageDropZoneView: View {
     }
 }
 
-// MARK: - Reorder drop delegate (W3-F3)
+// MARK: - Reorder drop delegate (V5-1)
 
-private struct ThumbnailDropDelegate: DropDelegate {
-    let targetIndex: Int
+/// ドロップ先のサムネに装着する DropDelegate。
+/// 真の並び替えは @State `draggedItem` を見て行い、`dropEntered` の段階で
+/// 既にライブで並び替える（指を離すまでに視覚的にも追従するため）。
+private struct ReorderDropDelegate: DropDelegate {
+    let targetURL: URL
     let viewModel: ReportViewModel
-    let internalIdentifier: String
+    @Binding var draggedItem: URL?
 
     func validateDrop(info: DropInfo) -> Bool {
-        info.hasItemsConforming(to: [UTType(internalIdentifier) ?? .data])
+        // 内部ドラッグ中のみ受け入れる
+        draggedItem != nil
+    }
+
+    func dropEntered(info: DropInfo) {
+        guard let dragged = draggedItem,
+              dragged != targetURL,
+              let from = viewModel.imageURLs.firstIndex(of: dragged),
+              let to = viewModel.imageURLs.firstIndex(of: targetURL) else { return }
+        withAnimation(.easeInOut(duration: 0.18)) {
+            viewModel.moveImage(from: from, to: to)
+        }
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        DropProposal(operation: .move)
     }
 
     func performDrop(info: DropInfo) -> Bool {
-        let providers = info.itemProviders(for: [UTType(internalIdentifier) ?? .data])
-        guard let provider = providers.first else { return false }
-
-        let target = targetIndex
-        let identifier = internalIdentifier
-        provider.loadDataRepresentation(forTypeIdentifier: identifier) { data, _ in
-            guard let data,
-                  let str = String(data: data, encoding: .utf8),
-                  let from = Int(str) else { return }
-            Task { @MainActor in
-                viewModel.moveImage(from: from, to: target)
-                viewModel.requestPreviewRefresh()
-            }
-        }
+        draggedItem = nil
+        viewModel.requestPreviewRefresh()
         return true
     }
 }
