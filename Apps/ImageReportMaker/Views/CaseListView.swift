@@ -54,10 +54,6 @@ struct CaseListView: View {
                     viewModel.removeCase(at: offsets)
                     viewModel.requestPreviewRefresh()
                 }
-                .onMove { source, destination in
-                    viewModel.moveCase(from: source, to: destination)
-                    viewModel.requestPreviewRefresh()
-                }
             }
             .listStyle(.inset)
             .frame(minHeight: 200)

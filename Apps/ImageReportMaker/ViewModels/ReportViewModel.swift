@@ -121,10 +121,6 @@ final class ReportViewModel: ObservableObject {
         cases.remove(at: index)
     }
 
-    func moveCase(from source: IndexSet, to destination: Int) {
-        cases.move(fromOffsets: source, toOffset: destination)
-    }
-
     // W3-J: cases[0] の変更を監視して永続化
     // V5-2: 毎キーストロークで UserDefaults に同期書き込みすると入力が重くなるため
     //        500ms デバウンスを挟んで最後の入力から落ち着いた時点だけ書き出す。
