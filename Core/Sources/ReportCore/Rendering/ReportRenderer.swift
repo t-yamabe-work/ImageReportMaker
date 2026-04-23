@@ -90,12 +90,16 @@ public enum ReportRenderer {
         let indentPt: Double
     }
 
+    struct DetailSegment: Sendable {
+        let lines: [WrappedLine]
+        let baselineYPt: Double
+    }
+
     struct CaseBlock: Sendable {
         let titleString: String
-        let detailLines: [WrappedLine]
+        let detailSegments: [DetailSegment]
         let topYPt: Double
         let titleBaselineYPt: Double
-        let detailFirstBaselineYPt: Double
         let detailLineHeightPt: Double
         let totalHeightPt: Double
     }
@@ -159,34 +163,45 @@ public enum ReportRenderer {
         let detailFontSize = LayoutConstants.caseDetailFontSizePt
         let arrowWidthPt = measureLineWidth(text: "→", fontSize: detailFontSize, weight: .w3)
 
-        let inputCases = model.cases.isEmpty ? [ReportCase(title: "", detail: "")] : model.cases
+        let inputCases = model.cases.isEmpty ? [ReportCase(title: "", details: [""])] : model.cases
         var caseBlocks: [CaseBlock] = []
         var currentY = bodyStartYPt
         let caseBottomPaddingPt: Double = 10.0
+        let detailGapPt = LayoutConstants.caseDetailFontSizePt * 0.35
         for c in inputCases {
             let titleString = "●" + c.title
-            let detailSource = "→" + c.detail
-            let detailLines = wrapText(
-                detailSource,
-                fontSize: detailFontSize,
-                weight: .w3,
-                contentWidthPt: contentWidthPt,
-                firstLineIndentPt: 0,
-                continuedIndentPt: arrowWidthPt
-            )
             let titleBaselineYPt = currentY + titleFontSize * 0.8
-            let detailFirstBaselineYPt = currentY + LayoutConstants.caseDetailOffsetPt + detailFontSize * 0.8
-            let detailLinesCount = max(detailLines.count, 1)
-            let detailBottomYPt = detailFirstBaselineYPt + Double(detailLinesCount - 1) * detailLineHeightPt + detailFontSize * 0.2
+            let detailsToRender = c.details.isEmpty ? [""] : c.details
+            var segments: [DetailSegment] = []
+            var segmentTopY = currentY + LayoutConstants.caseDetailOffsetPt
+            for (idx, d) in detailsToRender.enumerated() {
+                let detailSource = "→" + d
+                let lines = wrapText(
+                    detailSource,
+                    fontSize: detailFontSize,
+                    weight: .w3,
+                    contentWidthPt: contentWidthPt,
+                    firstLineIndentPt: 0,
+                    continuedIndentPt: arrowWidthPt
+                )
+                let baselineY = segmentTopY + detailFontSize * 0.8
+                let linesCount = max(lines.count, 1)
+                let segmentBottomY = baselineY + Double(linesCount - 1) * detailLineHeightPt + detailFontSize * 0.2
+                segments.append(DetailSegment(lines: lines, baselineYPt: baselineY))
+                segmentTopY = segmentBottomY
+                if idx < detailsToRender.count - 1 {
+                    segmentTopY += detailGapPt
+                }
+            }
+            let detailBottomYPt = segmentTopY
             let totalHeightPt = detailBottomYPt - currentY + caseBottomPaddingPt
 
             caseBlocks.append(
                 CaseBlock(
                     titleString: titleString,
-                    detailLines: detailLines,
+                    detailSegments: segments,
                     topYPt: currentY,
                     titleBaselineYPt: titleBaselineYPt,
-                    detailFirstBaselineYPt: detailFirstBaselineYPt,
                     detailLineHeightPt: detailLineHeightPt,
                     totalHeightPt: totalHeightPt
                 )
@@ -316,7 +331,7 @@ public enum ReportRenderer {
             layout.model.authorName,
             at: CGPoint(x: 75.65, y: y),
             fontSize: LayoutConstants.headerFontSizePt,
-            weight: .w6,
+            weight: .w3,
             context: context
         )
         drawText(
@@ -358,18 +373,20 @@ public enum ReportRenderer {
                 block.titleString,
                 at: CGPoint(x: leftPt, y: CGFloat(pageHeight - block.titleBaselineYPt)),
                 fontSize: LayoutConstants.caseTitleFontSizePt,
-                weight: .w6,
+                weight: .w3,
                 context: context
             )
-            for (i, wl) in block.detailLines.enumerated() {
-                let baselineY = block.detailFirstBaselineYPt + Double(i) * block.detailLineHeightPt
-                drawText(
-                    wl.text,
-                    at: CGPoint(x: leftPt + wl.indentPt, y: CGFloat(pageHeight - baselineY)),
-                    fontSize: LayoutConstants.caseDetailFontSizePt,
-                    weight: .w3,
-                    context: context
-                )
+            for segment in block.detailSegments {
+                for (i, wl) in segment.lines.enumerated() {
+                    let baselineY = segment.baselineYPt + Double(i) * block.detailLineHeightPt
+                    drawText(
+                        wl.text,
+                        at: CGPoint(x: leftPt + wl.indentPt, y: CGFloat(pageHeight - baselineY)),
+                        fontSize: LayoutConstants.caseDetailFontSizePt,
+                        weight: .w3,
+                        context: context
+                    )
+                }
             }
         }
     }

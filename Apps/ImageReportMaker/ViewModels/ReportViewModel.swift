@@ -29,6 +29,10 @@ final class ReportViewModel: ObservableObject {
     // W3-H: 書き出し中フラグ
     @Published var isExporting: Bool = false
 
+    // V8-1: 画像並び替え中フラグ。true の間は requestPreviewRefresh を抑止し、
+    //        ドロップ確定後に scheduleImageIdleRefresh() で 2 秒遅延反映する。
+    @Published var isReorderingImages: Bool = false
+
     // W3-G: プレビュー倍率
     @Published var previewZoom: Double
 
@@ -39,9 +43,16 @@ final class ReportViewModel: ObservableObject {
     private let appPreferences: AppPreferences
     private var previewTask: Task<Void, Never>?
     private var debounceTask: Task<Void, Never>?
+    // V8-1: ドロップ確定後の遅延プレビュー反映タスク
+    private var imageIdleRefreshTask: Task<Void, Never>?
+    // V8-2: サムネ NSImage キャッシュ（@MainActor 内なのでロック不要、@Published 不要）
+    private var thumbnailCache: [URL: NSImage] = [:]
     private var cancellables = Set<AnyCancellable>()
 
-    private static let previewDebounceNanos: UInt64 = 300_000_000
+    // V5-2: 入力レスポンス改善のためデバウンスを 300ms → 500ms に延長
+    private static let previewDebounceNanos: UInt64 = 500_000_000
+    // V5-2: topCase 永続化の Combine sink デバウンス
+    private static let topCasePersistDebounceMs: Int = 500
 
     init(
         preferences: UserPreferences = .shared,
@@ -54,8 +65,8 @@ final class ReportViewModel: ObservableObject {
         self.date = Date()
         // W3-I + W3-J: 一番上の案件を復元（保存済みがあれば、なければデフォルト文言）
         let restoredTitle = appPreferences.topCaseTitle ?? ""
-        let restoredDetail = appPreferences.topCaseDetail ?? AppPreferences.defaultCaseDetail
-        self.cases = [ReportCase(title: restoredTitle, detail: restoredDetail)]
+        let restoredDetails = appPreferences.topCaseDetails ?? AppPreferences.defaultCaseDetails
+        self.cases = [ReportCase(title: restoredTitle, details: restoredDetails)]
         self.imageURLs = []
 
         let savedFormat = preferences.lastExportFormat.flatMap { ExportFormat(rawValue: $0) } ?? .jpg
@@ -102,28 +113,36 @@ final class ReportViewModel: ObservableObject {
 
     func addCase() {
         // W3-I: 追加ケースも同じデフォルト文言で始める
-        cases.append(ReportCase(title: "", detail: AppPreferences.defaultCaseDetail))
+        cases.append(ReportCase(title: "", details: AppPreferences.defaultCaseDetails))
     }
 
     func removeCase(at offsets: IndexSet) {
         cases.remove(atOffsets: offsets)
         if cases.isEmpty {
-            cases.append(ReportCase(title: "", detail: AppPreferences.defaultCaseDetail))
+            cases.append(ReportCase(title: "", details: AppPreferences.defaultCaseDetails))
         }
     }
 
-    func moveCase(from source: IndexSet, to destination: Int) {
-        cases.move(fromOffsets: source, toOffset: destination)
+    // W3-F1: 単一インデックス削除（× ボタン用）
+    func removeCase(at index: Int) {
+        guard cases.indices.contains(index), cases.count > 1 else { return }
+        cases.remove(at: index)
     }
 
     // W3-J: cases[0] の変更を監視して永続化
+    // V5-2: 毎キーストロークで UserDefaults に同期書き込みすると入力が重くなるため
+    //        500ms デバウンスを挟んで最後の入力から落ち着いた時点だけ書き出す。
     private func bindTopCasePersistence() {
         $cases
             .dropFirst()
+            .debounce(
+                for: .milliseconds(Self.topCasePersistDebounceMs),
+                scheduler: DispatchQueue.main
+            )
             .sink { [weak self] newCases in
                 guard let self, let first = newCases.first else { return }
                 self.appPreferences.topCaseTitle = first.title
-                self.appPreferences.topCaseDetail = first.detail
+                self.appPreferences.topCaseDetails = first.details
             }
             .store(in: &cancellables)
     }
@@ -134,19 +153,62 @@ final class ReportViewModel: ObservableObject {
         let allowed: Set<String> = ["png", "jpg", "jpeg"]
         let filtered = urls.filter { allowed.contains($0.pathExtension.lowercased()) }
         imageURLs.append(contentsOf: filtered)
+        prefetchThumbnails(for: filtered)
     }
 
     func removeImage(at offsets: IndexSet) {
+        let removed: [URL] = offsets.compactMap {
+            imageURLs.indices.contains($0) ? imageURLs[$0] : nil
+        }
         imageURLs.remove(atOffsets: offsets)
+        for url in removed { thumbnailCache.removeValue(forKey: url) }
     }
 
     func removeImage(_ url: URL) {
         imageURLs.removeAll { $0 == url }
+        thumbnailCache.removeValue(forKey: url)
+    }
+
+    // V8-2: サムネ取得。キャッシュヒット優先、ミス時は同期読み込みしてキャッシュ格納。
+    func thumbnail(for url: URL) -> NSImage? {
+        if let cached = thumbnailCache[url] { return cached }
+        guard let image = NSImage(contentsOf: url) else { return nil }
+        thumbnailCache[url] = image
+        return image
+    }
+
+    // V8-2: 新規追加分をバックグラウンドで先読みし、最初の表示でも待たないようにする。
+    private func prefetchThumbnails(for urls: [URL]) {
+        let toLoad = urls.filter { thumbnailCache[$0] == nil }
+        guard !toLoad.isEmpty else { return }
+        Task.detached(priority: .utility) { [weak self] in
+            let loaded: [(URL, NSImage)] = toLoad.compactMap { url in
+                NSImage(contentsOf: url).map { (url, $0) }
+            }
+            await MainActor.run {
+                guard let self else { return }
+                for (url, image) in loaded where self.thumbnailCache[url] == nil {
+                    self.thumbnailCache[url] = image
+                }
+            }
+        }
+    }
+
+    // W3-F3: グリッド内ドラッグでサムネを並び替える。
+    // 結果として `imageURLs[target]` が移動元のアイテムになる。
+    func moveImage(from source: Int, to target: Int) {
+        guard imageURLs.indices.contains(source),
+              target >= 0, target < imageURLs.count,
+              source != target else { return }
+        let toOffset = source < target ? target + 1 : target
+        imageURLs.move(fromOffsets: IndexSet(integer: source), toOffset: toOffset)
     }
 
     // MARK: - Preview rendering (W3-H debounced)
 
     func requestPreviewRefresh() {
+        // V8-1: 画像並び替え中はプレビュー反映を抑止（ドロップ確定後の idle refresh に委ねる）
+        if isReorderingImages { return }
         debounceTask?.cancel()
         debounceTask = Task { [weak self] in
             do {
@@ -154,6 +216,24 @@ final class ReportViewModel: ObservableObject {
             } catch {
                 return
             }
+            if Task.isCancelled { return }
+            await MainActor.run { self?.refreshPreviewNow() }
+        }
+    }
+
+    // V8-1: ドラッグ開始時に呼ぶ。直前にスケジュールした遅延反映があればキャンセル。
+    func cancelImageIdleRefresh() {
+        imageIdleRefreshTask?.cancel()
+        imageIdleRefreshTask = nil
+    }
+
+    // V8-1: ドロップ確定時に呼ぶ。2秒のアイドル後にプレビューを反映する。
+    //        この間に再度ドラッグが始まれば cancelImageIdleRefresh で破棄され、
+    //        最後のドロップから 2 秒後に1回だけ反映される。
+    func scheduleImageIdleRefresh() {
+        imageIdleRefreshTask?.cancel()
+        imageIdleRefreshTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
             if Task.isCancelled { return }
             await MainActor.run { self?.refreshPreviewNow() }
         }

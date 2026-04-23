@@ -19,11 +19,23 @@ final class ReportCoreTests: XCTestCase {
         let model = ReportModel(
             authorName: "山田 太郎",
             date: Date(timeIntervalSince1970: 0),
-            cases: [ReportCase(title: "案件A", detail: "作業内容A")],
+            cases: [ReportCase(title: "案件A", details: ["作業内容A"])],
             imagePaths: []
         )
         XCTAssertEqual(model.authorName, "山田 太郎")
         XCTAssertEqual(model.cases.count, 1)
+        XCTAssertEqual(model.cases[0].details, ["作業内容A"])
+    }
+
+    func testReportCaseSupportsMultipleDetails() {
+        let c = ReportCase(title: "案件", details: ["詳細1", "詳細2", "詳細3"])
+        XCTAssertEqual(c.details.count, 3)
+        XCTAssertEqual(c.details[1], "詳細2")
+    }
+
+    func testFontSizesAreSeventeen() {
+        XCTAssertEqual(LayoutConstants.caseTitleFontSizePt, 17.0, accuracy: 1e-9)
+        XCTAssertEqual(LayoutConstants.caseDetailFontSizePt, 17.0, accuracy: 1e-9)
     }
 }
 
@@ -120,7 +132,7 @@ final class ReportRendererTests: XCTestCase {
         let model = ReportModel(
             authorName: "山田 太郎",
             date: Date(timeIntervalSince1970: 0),
-            cases: [ReportCase(title: "案件A", detail: "詳細A")],
+            cases: [ReportCase(title: "案件A", details: ["詳細A"])],
             imagePaths: []
         )
         let data = try ReportRenderer.render(model: model, options: RenderOptions(format: .svg))
@@ -130,11 +142,38 @@ final class ReportRendererTests: XCTestCase {
         XCTAssertTrue(svg.contains("山田 太郎"))
     }
 
+    func testSVGHasNoBoldClass() throws {
+        let model = ReportModel(
+            authorName: "山田 太郎",
+            date: Date(timeIntervalSince1970: 0),
+            cases: [ReportCase(title: "案件A", details: ["詳細A"])],
+            imagePaths: []
+        )
+        let data = try ReportRenderer.render(model: model, options: RenderOptions(format: .svg))
+        let svg = String(data: data, encoding: .utf8) ?? ""
+        XCTAssertFalse(svg.contains("t-w6"), "太字クラス t-w6 は出力されないはず")
+        XCTAssertFalse(svg.contains("font-weight:600"), "font-weight:600 は出力されないはず")
+    }
+
+    func testSVGRendersAllDetailsInOneCase() throws {
+        let model = ReportModel(
+            authorName: "山田 太郎",
+            date: Date(timeIntervalSince1970: 0),
+            cases: [ReportCase(title: "案件A", details: ["最初の詳細", "二番目の詳細", "三番目の詳細"])],
+            imagePaths: []
+        )
+        let data = try ReportRenderer.render(model: model, options: RenderOptions(format: .svg))
+        let svg = String(data: data, encoding: .utf8) ?? ""
+        XCTAssertTrue(svg.contains("最初の詳細"))
+        XCTAssertTrue(svg.contains("二番目の詳細"))
+        XCTAssertTrue(svg.contains("三番目の詳細"))
+    }
+
     func testJPGRenderReturnsBytes() throws {
         let model = ReportModel(
             authorName: "山田 太郎",
             date: Date(timeIntervalSince1970: 0),
-            cases: [ReportCase(title: "案件A", detail: "詳細A")],
+            cases: [ReportCase(title: "案件A", details: ["詳細A"])],
             imagePaths: []
         )
         let data = try ReportRenderer.render(model: model, options: RenderOptions(format: .jpg))
@@ -205,8 +244,8 @@ final class ReportRendererTests: XCTestCase {
             authorName: "テスト",
             date: Date(timeIntervalSince1970: 0),
             cases: [
-                ReportCase(title: "A", detail: "短い"),
-                ReportCase(title: "B", detail: "短い")
+                ReportCase(title: "A", details: ["短い"]),
+                ReportCase(title: "B", details: ["短い"])
             ],
             imagePaths: []
         )
@@ -215,8 +254,8 @@ final class ReportRendererTests: XCTestCase {
             authorName: "テスト",
             date: Date(timeIntervalSince1970: 0),
             cases: [
-                ReportCase(title: "A", detail: longDetail),
-                ReportCase(title: "B", detail: "短い")
+                ReportCase(title: "A", details: [longDetail]),
+                ReportCase(title: "B", details: ["短い"])
             ],
             imagePaths: []
         )
@@ -224,15 +263,39 @@ final class ReportRendererTests: XCTestCase {
         let longLayout = try ReportRenderer.prepareLayout(model: longModel)
         XCTAssertGreaterThan(longLayout.pageHeightPt, shortLayout.pageHeightPt)
         XCTAssertGreaterThan(longLayout.cases[0].totalHeightPt, shortLayout.cases[0].totalHeightPt)
-        XCTAssertGreaterThan(longLayout.cases[0].detailLines.count, 1)
-        XCTAssertEqual(shortLayout.cases[0].detailLines.count, 1)
+        XCTAssertGreaterThan(longLayout.cases[0].detailSegments[0].lines.count, 1)
+        XCTAssertEqual(shortLayout.cases[0].detailSegments[0].lines.count, 1)
+    }
+
+    func testMultipleDetailsIncreaseCaseHeight() throws {
+        let oneDetailModel = ReportModel(
+            authorName: "テスト",
+            date: Date(timeIntervalSince1970: 0),
+            cases: [ReportCase(title: "A", details: ["詳細1"])],
+            imagePaths: []
+        )
+        let threeDetailsModel = ReportModel(
+            authorName: "テスト",
+            date: Date(timeIntervalSince1970: 0),
+            cases: [ReportCase(title: "A", details: ["詳細1", "詳細2", "詳細3"])],
+            imagePaths: []
+        )
+        let oneLayout = try ReportRenderer.prepareLayout(model: oneDetailModel)
+        let threeLayout = try ReportRenderer.prepareLayout(model: threeDetailsModel)
+        XCTAssertEqual(oneLayout.cases[0].detailSegments.count, 1)
+        XCTAssertEqual(threeLayout.cases[0].detailSegments.count, 3)
+        XCTAssertGreaterThan(threeLayout.cases[0].totalHeightPt, oneLayout.cases[0].totalHeightPt)
+        // 各 segment の baseline は単調増加
+        let baselines = threeLayout.cases[0].detailSegments.map { $0.baselineYPt }
+        XCTAssertLessThan(baselines[0], baselines[1])
+        XCTAssertLessThan(baselines[1], baselines[2])
     }
 
     func testPreviewAndExportDpiProduceDifferentByteSizes() throws {
         let model = ReportModel(
             authorName: "テスト",
             date: Date(timeIntervalSince1970: 0),
-            cases: [ReportCase(title: "A", detail: "テスト")],
+            cases: [ReportCase(title: "A", details: ["テスト"])],
             imagePaths: []
         )
         let preview = try ReportRenderer.render(model: model, options: .preview(format: .png))

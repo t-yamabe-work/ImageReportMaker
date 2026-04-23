@@ -5,9 +5,21 @@ import UniformTypeIdentifiers
 struct ImageDropZoneView: View {
     @ObservedObject var viewModel: ReportViewModel
     @State private var isTargeted = false
+    // V6-2: 内部ドラッグ中の URL を保持する。並び替えロジックの真実は SwiftUI 側の
+    //        @State に置き、NSItemProvider は OS の drag セッションを成立させるための
+    //        ダミー封筒（NSString）として機能させる。
+    //        v0.1.5 の独自 UTI 方式は Info.plist 未登録のため macOS UTI レジストリで
+    //        マッチが成立せず、実機で onDrop が発火しないことが判明したので NSString /
+    //        UTType.text に切り替え。内部ドラッグの判別は draggedItem の存在で行う。
+    @State private var draggedItem: URL?
+    // V7-1: 直近の (from, to) を保持し、SwiftUI が同じ遷移で dropEntered を
+    //        連続発火するときに無駄な moveImage / アニメ重なりを防ぐ。
+    @State private var lastSwapKey: String?
 
     // W3-C: .png/.jpeg だけだと一部のシステムで弾かれるため .image と .fileURL も含める
     private let acceptedTypes: [UTType] = [.png, .jpeg, .image, .fileURL]
+
+    private let columns = [GridItem(.adaptive(minimum: 108, maximum: 108), spacing: 10, alignment: .top)]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -28,15 +40,35 @@ struct ImageDropZoneView: View {
             dropTarget
 
             if !viewModel.imageURLs.isEmpty {
-                ScrollView(.horizontal, showsIndicators: true) {
-                    LazyHStack(spacing: 10) {
+                ScrollView(.vertical, showsIndicators: true) {
+                    LazyVGrid(columns: columns, alignment: .leading, spacing: 10) {
                         ForEach(viewModel.imageURLs, id: \.self) { url in
                             thumbnail(for: url)
+                                .opacity(draggedItem == url ? 0.35 : 1.0)
+                                .onDrag {
+                                    // V8-1: ドラッグ開始時にプレビュー反映を抑止し、
+                                    //        直前のアイドル反映タスクがあればキャンセル。
+                                    viewModel.cancelImageIdleRefresh()
+                                    viewModel.isReorderingImages = true
+                                    self.draggedItem = url
+                                    return NSItemProvider(object: url.absoluteString as NSString)
+                                } preview: {
+                                    dragPreview(for: url)
+                                }
+                                .onDrop(
+                                    of: [UTType.text],
+                                    delegate: ReorderDropDelegate(
+                                        targetURL: url,
+                                        viewModel: viewModel,
+                                        draggedItem: $draggedItem,
+                                        lastSwapKey: $lastSwapKey
+                                    )
+                                )
                         }
                     }
                     .padding(.vertical, 6)
                 }
-                .frame(height: 120)
+                .frame(maxHeight: 240)
             }
         }
     }
@@ -85,7 +117,8 @@ struct ImageDropZoneView: View {
 
     @ViewBuilder
     private func thumbnailImage(for url: URL) -> some View {
-        if let image = NSImage(contentsOf: url) {
+        // V8-2: ディスク毎回読み直しを避けるため ViewModel のキャッシュ経由で取得
+        if let image = viewModel.thumbnail(for: url) {
             Image(nsImage: image)
                 .resizable()
                 .scaledToFill()
@@ -100,9 +133,28 @@ struct ImageDropZoneView: View {
         }
     }
 
+    @ViewBuilder
+    private func dragPreview(for url: URL) -> some View {
+        if let image = viewModel.thumbnail(for: url) {
+            Image(nsImage: image)
+                .resizable()
+                .scaledToFill()
+                .frame(width: 96, height: 96)
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .shadow(radius: 4)
+        } else {
+            RoundedRectangle(cornerRadius: 6)
+                .fill(Color.secondary.opacity(0.5))
+                .frame(width: 96, height: 96)
+        }
+    }
+
     // MARK: - Drop handling (W3-C)
 
     private func handleDrop(providers: [NSItemProvider]) -> Bool {
+        // V6-2: 内部ドラッグ中はサムネ並び替えとして扱うので、外部追加扱いしない。
+        if draggedItem != nil { return false }
+
         let captured = providers
         Task { @MainActor in
             var collected: [URL] = []
@@ -187,6 +239,57 @@ struct ImageDropZoneView: View {
             viewModel.addImages(panel.urls)
             viewModel.requestPreviewRefresh()
         }
+    }
+}
+
+// MARK: - Reorder drop delegate (V5-1)
+
+/// ドロップ先のサムネに装着する DropDelegate。
+/// 真の並び替えは @State `draggedItem` を見て行い、`dropEntered` の段階で
+/// 既にライブで並び替える（指を離すまでに視覚的にも追従するため）。
+private struct ReorderDropDelegate: DropDelegate {
+    let targetURL: URL
+    let viewModel: ReportViewModel
+    @Binding var draggedItem: URL?
+    @Binding var lastSwapKey: String?
+
+    func validateDrop(info: DropInfo) -> Bool {
+        // 内部ドラッグ中のみ受け入れる
+        draggedItem != nil
+    }
+
+    func dropEntered(info: DropInfo) {
+        guard let dragged = draggedItem,
+              dragged != targetURL,
+              let from = viewModel.imageURLs.firstIndex(of: dragged),
+              let to = viewModel.imageURLs.firstIndex(of: targetURL) else { return }
+        // V7-1: 直近と同じ (from, to) なら早期 return（連続発火抑制）
+        let key = "\(from)>\(to)"
+        if lastSwapKey == key { return }
+        lastSwapKey = key
+        // V7-1: easeInOut(0.18) → spring(0.22, 0.85) でキビキビした追従に
+        withAnimation(.spring(response: 0.22, dampingFraction: 0.85)) {
+            viewModel.moveImage(from: from, to: to)
+        }
+    }
+
+    func dropExited(info: DropInfo) {
+        // 別セルへ抜けたら直近キーをクリアして次の遷移を許可
+        lastSwapKey = nil
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        DropProposal(operation: .move)
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        draggedItem = nil
+        lastSwapKey = nil
+        // V8-1: 即時 requestPreviewRefresh ではなく、2 秒のアイドル後に反映。
+        //        連続ドラッグ時は次の onDrag で cancelImageIdleRefresh により破棄される。
+        viewModel.isReorderingImages = false
+        viewModel.scheduleImageIdleRefresh()
+        return true
     }
 }
 

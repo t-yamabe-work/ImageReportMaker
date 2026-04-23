@@ -23,7 +23,6 @@ public enum SVGExporter {
         svg += ".rule-dashed{stroke:#000;stroke-width:0.75;fill:none;stroke-dasharray:3.75 3.75;}\n"
         svg += ".bg-gray{fill:#efefef;}\n"
         svg += ".t-w3{font-family:'Hiragino Sans','ヒラギノ角ゴシック',sans-serif;font-weight:300;fill:#000;}\n"
-        svg += ".t-w6{font-family:'Hiragino Sans','ヒラギノ角ゴシック',sans-serif;font-weight:600;fill:#000;}\n"
         svg += "</style>\n</defs>\n"
 
         // Gray block
@@ -36,7 +35,7 @@ public enum SVGExporter {
 
         // Header text
         svg += textElement("名前", x: 22.19, y: layout.headerBaselineYPt, size: LayoutConstants.headerNameLabelFontSizePt, cls: "t-w3")
-        svg += textElement(layout.model.authorName, x: 75.65, y: layout.headerBaselineYPt, size: LayoutConstants.headerFontSizePt, cls: "t-w6")
+        svg += textElement(layout.model.authorName, x: 75.65, y: layout.headerBaselineYPt, size: LayoutConstants.headerFontSizePt, cls: "t-w3")
         svg += textElement(layout.dateText, x: 295.1, y: layout.headerBaselineYPt, size: layout.dateFontSizePt, cls: "t-w3")
 
         // Rules
@@ -55,17 +54,19 @@ public enum SVGExporter {
                 x: leftPt,
                 y: block.titleBaselineYPt,
                 size: LayoutConstants.caseTitleFontSizePt,
-                cls: "t-w6"
+                cls: "t-w3"
             )
-            for (i, wl) in block.detailLines.enumerated() {
-                let baselineY = block.detailFirstBaselineYPt + Double(i) * block.detailLineHeightPt
-                svg += textElement(
-                    wl.text,
-                    x: leftPt + wl.indentPt,
-                    y: baselineY,
-                    size: LayoutConstants.caseDetailFontSizePt,
-                    cls: "t-w3"
-                )
+            for segment in block.detailSegments {
+                for (i, wl) in segment.lines.enumerated() {
+                    let baselineY = segment.baselineYPt + Double(i) * block.detailLineHeightPt
+                    svg += textElement(
+                        wl.text,
+                        x: leftPt + wl.indentPt,
+                        y: baselineY,
+                        size: LayoutConstants.caseDetailFontSizePt,
+                        cls: "t-w3"
+                    )
+                }
             }
         }
 
@@ -113,8 +114,7 @@ public enum SVGExporter {
     private static func fontFaceRules() -> String {
         var rules = ""
         let faces: [(name: String, weight: Int, file: String)] = [
-            ("Hiragino Sans", 300, "/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc"),
-            ("Hiragino Sans", 600, "/System/Library/Fonts/ヒラギノ角ゴシック W6.ttc")
+            ("Hiragino Sans", 300, "/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc")
         ]
         for face in faces {
             if let data = try? Data(contentsOf: URL(fileURLWithPath: face.file)) {
