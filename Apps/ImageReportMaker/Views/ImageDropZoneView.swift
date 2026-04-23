@@ -12,6 +12,9 @@ struct ImageDropZoneView: View {
     //        マッチが成立せず、実機で onDrop が発火しないことが判明したので NSString /
     //        UTType.text に切り替え。内部ドラッグの判別は draggedItem の存在で行う。
     @State private var draggedItem: URL?
+    // V7-1: 直近の (from, to) を保持し、SwiftUI が同じ遷移で dropEntered を
+    //        連続発火するときに無駄な moveImage / アニメ重なりを防ぐ。
+    @State private var lastSwapKey: String?
 
     // W3-C: .png/.jpeg だけだと一部のシステムで弾かれるため .image と .fileURL も含める
     private let acceptedTypes: [UTType] = [.png, .jpeg, .image, .fileURL]
@@ -53,7 +56,8 @@ struct ImageDropZoneView: View {
                                     delegate: ReorderDropDelegate(
                                         targetURL: url,
                                         viewModel: viewModel,
-                                        draggedItem: $draggedItem
+                                        draggedItem: $draggedItem,
+                                        lastSwapKey: $lastSwapKey
                                     )
                                 )
                         }
@@ -242,6 +246,7 @@ private struct ReorderDropDelegate: DropDelegate {
     let targetURL: URL
     let viewModel: ReportViewModel
     @Binding var draggedItem: URL?
+    @Binding var lastSwapKey: String?
 
     func validateDrop(info: DropInfo) -> Bool {
         // 内部ドラッグ中のみ受け入れる
@@ -253,9 +258,19 @@ private struct ReorderDropDelegate: DropDelegate {
               dragged != targetURL,
               let from = viewModel.imageURLs.firstIndex(of: dragged),
               let to = viewModel.imageURLs.firstIndex(of: targetURL) else { return }
-        withAnimation(.easeInOut(duration: 0.18)) {
+        // V7-1: 直近と同じ (from, to) なら早期 return（連続発火抑制）
+        let key = "\(from)>\(to)"
+        if lastSwapKey == key { return }
+        lastSwapKey = key
+        // V7-1: easeInOut(0.18) → spring(0.22, 0.85) でキビキビした追従に
+        withAnimation(.spring(response: 0.22, dampingFraction: 0.85)) {
             viewModel.moveImage(from: from, to: to)
         }
+    }
+
+    func dropExited(info: DropInfo) {
+        // 別セルへ抜けたら直近キーをクリアして次の遷移を許可
+        lastSwapKey = nil
     }
 
     func dropUpdated(info: DropInfo) -> DropProposal? {
@@ -264,6 +279,7 @@ private struct ReorderDropDelegate: DropDelegate {
 
     func performDrop(info: DropInfo) -> Bool {
         draggedItem = nil
+        lastSwapKey = nil
         viewModel.requestPreviewRefresh()
         return true
     }
