@@ -16,10 +16,10 @@ public enum LayoutConstants {
 
     public static let headerFontSizePt: Double = 23.95
     public static let headerNameLabelFontSizePt: Double = 11.43
-    public static let caseTitleFontSizePt: Double = 22.30
-    public static let caseDetailFontSizePt: Double = 21.29
+    public static let caseTitleFontSizePt: Double = 17.0
+    public static let caseDetailFontSizePt: Double = 17.0
     public static let caseDetailLineHeightMultiple: Double = 1.25
-    public static let caseDetailOffsetPt: Double = 38.13
+    public static let caseDetailOffsetPt: Double = 27.2
 
     public static let outerCornerRadiusPt: Double = 33.47
     public static let outerStrokeWidthPt: Double = 2.83
