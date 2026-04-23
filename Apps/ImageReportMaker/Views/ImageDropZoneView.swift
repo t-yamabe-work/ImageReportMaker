@@ -5,19 +5,16 @@ import UniformTypeIdentifiers
 struct ImageDropZoneView: View {
     @ObservedObject var viewModel: ReportViewModel
     @State private var isTargeted = false
-    // V5-1: 内部ドラッグ中の URL を保持する。並び替えロジックの真実はここに置き、
-    //        NSItemProvider はマッチング用の“封筒”としてのみ機能させる。
+    // V6-2: 内部ドラッグ中の URL を保持する。並び替えロジックの真実は SwiftUI 側の
+    //        @State に置き、NSItemProvider は OS の drag セッションを成立させるための
+    //        ダミー封筒（NSString）として機能させる。
+    //        v0.1.5 の独自 UTI 方式は Info.plist 未登録のため macOS UTI レジストリで
+    //        マッチが成立せず、実機で onDrop が発火しないことが判明したので NSString /
+    //        UTType.text に切り替え。内部ドラッグの判別は draggedItem の存在で行う。
     @State private var draggedItem: URL?
 
     // W3-C: .png/.jpeg だけだと一部のシステムで弾かれるため .image と .fileURL も含める
     private let acceptedTypes: [UTType] = [.png, .jpeg, .image, .fileURL]
-
-    // V5-1: 内部ドラッグ識別用カスタム UTI（外部 fileURL/image と区別するため独自空間に置く）
-    private static let internalIndexIdentifier = "com.tyamabe.imagereportmaker.internal-image-index"
-    private static let internalIndexUTType: UTType = {
-        if let t = UTType(internalIndexIdentifier) { return t }
-        return UTType(exportedAs: internalIndexIdentifier, conformingTo: .data)
-    }()
 
     private let columns = [GridItem(.adaptive(minimum: 108, maximum: 108), spacing: 10, alignment: .top)]
 
@@ -47,12 +44,12 @@ struct ImageDropZoneView: View {
                                 .opacity(draggedItem == url ? 0.35 : 1.0)
                                 .onDrag {
                                     self.draggedItem = url
-                                    return makeIndexProvider()
+                                    return NSItemProvider(object: url.absoluteString as NSString)
                                 } preview: {
                                     dragPreview(for: url)
                                 }
                                 .onDrop(
-                                    of: [Self.internalIndexUTType],
+                                    of: [UTType.text],
                                     delegate: ReorderDropDelegate(
                                         targetURL: url,
                                         viewModel: viewModel,
@@ -143,31 +140,13 @@ struct ImageDropZoneView: View {
         }
     }
 
-    // MARK: - Internal drag provider (V5-1)
-
-    private func makeIndexProvider() -> NSItemProvider {
-        let provider = NSItemProvider()
-        // 中身は使わない。マッチング用に内部 UTI で空 Data を載せるだけ。
-        provider.registerDataRepresentation(
-            forTypeIdentifier: Self.internalIndexIdentifier,
-            visibility: .all
-        ) { completion in
-            completion(Data(), nil)
-            return nil
-        }
-        return provider
-    }
-
     // MARK: - Drop handling (W3-C)
 
     private func handleDrop(providers: [NSItemProvider]) -> Bool {
-        // 内部 UTI のみのプロバイダ（並び替え）はここでは扱わない
-        let externalProviders = providers.filter {
-            !$0.hasItemConformingToTypeIdentifier(Self.internalIndexIdentifier)
-        }
-        guard !externalProviders.isEmpty else { return false }
+        // V6-2: 内部ドラッグ中はサムネ並び替えとして扱うので、外部追加扱いしない。
+        if draggedItem != nil { return false }
 
-        let captured = externalProviders
+        let captured = providers
         Task { @MainActor in
             var collected: [URL] = []
             for provider in captured {
