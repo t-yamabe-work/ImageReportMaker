@@ -29,6 +29,10 @@ final class ReportViewModel: ObservableObject {
     // W3-H: 書き出し中フラグ
     @Published var isExporting: Bool = false
 
+    // V8-1: 画像並び替え中フラグ。true の間は requestPreviewRefresh を抑止し、
+    //        ドロップ確定後に scheduleImageIdleRefresh() で 2 秒遅延反映する。
+    @Published var isReorderingImages: Bool = false
+
     // W3-G: プレビュー倍率
     @Published var previewZoom: Double
 
@@ -39,6 +43,8 @@ final class ReportViewModel: ObservableObject {
     private let appPreferences: AppPreferences
     private var previewTask: Task<Void, Never>?
     private var debounceTask: Task<Void, Never>?
+    // V8-1: ドロップ確定後の遅延プレビュー反映タスク
+    private var imageIdleRefreshTask: Task<Void, Never>?
     private var cancellables = Set<AnyCancellable>()
 
     // V5-2: 入力レスポンス改善のためデバウンスを 300ms → 500ms に延長
@@ -168,6 +174,8 @@ final class ReportViewModel: ObservableObject {
     // MARK: - Preview rendering (W3-H debounced)
 
     func requestPreviewRefresh() {
+        // V8-1: 画像並び替え中はプレビュー反映を抑止（ドロップ確定後の idle refresh に委ねる）
+        if isReorderingImages { return }
         debounceTask?.cancel()
         debounceTask = Task { [weak self] in
             do {
@@ -175,6 +183,24 @@ final class ReportViewModel: ObservableObject {
             } catch {
                 return
             }
+            if Task.isCancelled { return }
+            await MainActor.run { self?.refreshPreviewNow() }
+        }
+    }
+
+    // V8-1: ドラッグ開始時に呼ぶ。直前にスケジュールした遅延反映があればキャンセル。
+    func cancelImageIdleRefresh() {
+        imageIdleRefreshTask?.cancel()
+        imageIdleRefreshTask = nil
+    }
+
+    // V8-1: ドロップ確定時に呼ぶ。2秒のアイドル後にプレビューを反映する。
+    //        この間に再度ドラッグが始まれば cancelImageIdleRefresh で破棄され、
+    //        最後のドロップから 2 秒後に1回だけ反映される。
+    func scheduleImageIdleRefresh() {
+        imageIdleRefreshTask?.cancel()
+        imageIdleRefreshTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
             if Task.isCancelled { return }
             await MainActor.run { self?.refreshPreviewNow() }
         }

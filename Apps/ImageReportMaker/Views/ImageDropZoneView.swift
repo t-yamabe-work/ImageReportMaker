@@ -46,6 +46,10 @@ struct ImageDropZoneView: View {
                             thumbnail(for: url)
                                 .opacity(draggedItem == url ? 0.35 : 1.0)
                                 .onDrag {
+                                    // V8-1: ドラッグ開始時にプレビュー反映を抑止し、
+                                    //        直前のアイドル反映タスクがあればキャンセル。
+                                    viewModel.cancelImageIdleRefresh()
+                                    viewModel.isReorderingImages = true
                                     self.draggedItem = url
                                     return NSItemProvider(object: url.absoluteString as NSString)
                                 } preview: {
@@ -280,7 +284,10 @@ private struct ReorderDropDelegate: DropDelegate {
     func performDrop(info: DropInfo) -> Bool {
         draggedItem = nil
         lastSwapKey = nil
-        viewModel.requestPreviewRefresh()
+        // V8-1: 即時 requestPreviewRefresh ではなく、2 秒のアイドル後に反映。
+        //        連続ドラッグ時は次の onDrag で cancelImageIdleRefresh により破棄される。
+        viewModel.isReorderingImages = false
+        viewModel.scheduleImageIdleRefresh()
         return true
     }
 }
