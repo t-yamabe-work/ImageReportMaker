@@ -56,7 +56,9 @@ struct CaseListView: View {
                 }
             }
             .listStyle(.inset)
-            .frame(minHeight: 200)
+            // V7-2: 起動直後から3件分の案件枠を確保。1件 ≒ タイトル+詳細1行+追加ボタン+
+            //        パディングで ~130pt。3件 ≒ 400pt（4件以降は親 ScrollView でスクロール）。
+            .frame(minHeight: 400)
         }
         .onAppear {
             // V5-3: 起動時に1件目の案件タイトル欄へフォーカス（複数回 onAppear が来ても1度だけ）
