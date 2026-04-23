@@ -45,6 +45,8 @@ final class ReportViewModel: ObservableObject {
     private var debounceTask: Task<Void, Never>?
     // V8-1: ドロップ確定後の遅延プレビュー反映タスク
     private var imageIdleRefreshTask: Task<Void, Never>?
+    // V8-2: サムネ NSImage キャッシュ（@MainActor 内なのでロック不要、@Published 不要）
+    private var thumbnailCache: [URL: NSImage] = [:]
     private var cancellables = Set<AnyCancellable>()
 
     // V5-2: 入力レスポンス改善のためデバウンスを 300ms → 500ms に延長
@@ -151,14 +153,45 @@ final class ReportViewModel: ObservableObject {
         let allowed: Set<String> = ["png", "jpg", "jpeg"]
         let filtered = urls.filter { allowed.contains($0.pathExtension.lowercased()) }
         imageURLs.append(contentsOf: filtered)
+        prefetchThumbnails(for: filtered)
     }
 
     func removeImage(at offsets: IndexSet) {
+        let removed: [URL] = offsets.compactMap {
+            imageURLs.indices.contains($0) ? imageURLs[$0] : nil
+        }
         imageURLs.remove(atOffsets: offsets)
+        for url in removed { thumbnailCache.removeValue(forKey: url) }
     }
 
     func removeImage(_ url: URL) {
         imageURLs.removeAll { $0 == url }
+        thumbnailCache.removeValue(forKey: url)
+    }
+
+    // V8-2: サムネ取得。キャッシュヒット優先、ミス時は同期読み込みしてキャッシュ格納。
+    func thumbnail(for url: URL) -> NSImage? {
+        if let cached = thumbnailCache[url] { return cached }
+        guard let image = NSImage(contentsOf: url) else { return nil }
+        thumbnailCache[url] = image
+        return image
+    }
+
+    // V8-2: 新規追加分をバックグラウンドで先読みし、最初の表示でも待たないようにする。
+    private func prefetchThumbnails(for urls: [URL]) {
+        let toLoad = urls.filter { thumbnailCache[$0] == nil }
+        guard !toLoad.isEmpty else { return }
+        Task.detached(priority: .utility) { [weak self] in
+            let loaded: [(URL, NSImage)] = toLoad.compactMap { url in
+                NSImage(contentsOf: url).map { (url, $0) }
+            }
+            await MainActor.run {
+                guard let self else { return }
+                for (url, image) in loaded where self.thumbnailCache[url] == nil {
+                    self.thumbnailCache[url] = image
+                }
+            }
+        }
     }
 
     // W3-F3: グリッド内ドラッグでサムネを並び替える。

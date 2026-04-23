@@ -117,7 +117,8 @@ struct ImageDropZoneView: View {
 
     @ViewBuilder
     private func thumbnailImage(for url: URL) -> some View {
-        if let image = NSImage(contentsOf: url) {
+        // V8-2: ディスク毎回読み直しを避けるため ViewModel のキャッシュ経由で取得
+        if let image = viewModel.thumbnail(for: url) {
             Image(nsImage: image)
                 .resizable()
                 .scaledToFill()
@@ -134,7 +135,7 @@ struct ImageDropZoneView: View {
 
     @ViewBuilder
     private func dragPreview(for url: URL) -> some View {
-        if let image = NSImage(contentsOf: url) {
+        if let image = viewModel.thumbnail(for: url) {
             Image(nsImage: image)
                 .resizable()
                 .scaledToFill()
