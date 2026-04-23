@@ -4,8 +4,8 @@ import Foundation
 final class AppPreferences: @unchecked Sendable {
     static let shared = AppPreferences()
 
-    /// 詳細文のデフォルト文言（W3-I）
-    static let defaultCaseDetail: String = "を進行いたしました。"
+    /// 詳細文のデフォルト文言（W3-I）。複数詳細対応で単要素配列。
+    static let defaultCaseDetails: [String] = ["を進行いたしました。"]
 
     private let defaults: UserDefaults
 
@@ -16,12 +16,31 @@ final class AppPreferences: @unchecked Sendable {
         static let freeText = "freeText"
         static let previewZoom = "previewZoom"
         static let topCaseTitle = "topCaseTitle"
-        static let topCaseDetail = "topCaseDetail"
+        static let topCaseDetail = "topCaseDetail"          // 旧: String?（マイグレ用に残す）
+        static let topCaseDetails = "topCaseDetails"        // 新: [String]?（JSON）
         static let collisionPolicy = "collisionPolicy"
     }
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
+        migrateTopCaseDetailIfNeeded()
+    }
+
+    private func migrateTopCaseDetailIfNeeded() {
+        // 旧キーがあって新キーが未設定のときだけ移行
+        guard defaults.object(forKey: Key.topCaseDetails) == nil,
+              let legacy = defaults.string(forKey: Key.topCaseDetail) else {
+            // 旧キーが残っているなら掃除のみ
+            if defaults.object(forKey: Key.topCaseDetail) != nil,
+               defaults.object(forKey: Key.topCaseDetails) != nil {
+                defaults.removeObject(forKey: Key.topCaseDetail)
+            }
+            return
+        }
+        if let data = try? JSONEncoder().encode([legacy]) {
+            defaults.set(data, forKey: Key.topCaseDetails)
+        }
+        defaults.removeObject(forKey: Key.topCaseDetail)
     }
 
     var useDateInName: Bool {
@@ -61,9 +80,19 @@ final class AppPreferences: @unchecked Sendable {
         set { defaults.set(newValue, forKey: Key.topCaseTitle) }
     }
 
-    var topCaseDetail: String? {
-        get { defaults.string(forKey: Key.topCaseDetail) }
-        set { defaults.set(newValue, forKey: Key.topCaseDetail) }
+    var topCaseDetails: [String]? {
+        get {
+            guard let data = defaults.data(forKey: Key.topCaseDetails) else { return nil }
+            return try? JSONDecoder().decode([String].self, from: data)
+        }
+        set {
+            if let value = newValue,
+               let data = try? JSONEncoder().encode(value) {
+                defaults.set(data, forKey: Key.topCaseDetails)
+            } else {
+                defaults.removeObject(forKey: Key.topCaseDetails)
+            }
+        }
     }
 
     // W3-K: 同名ファイル衝突時の挙動

@@ -54,8 +54,8 @@ final class ReportViewModel: ObservableObject {
         self.date = Date()
         // W3-I + W3-J: 一番上の案件を復元（保存済みがあれば、なければデフォルト文言）
         let restoredTitle = appPreferences.topCaseTitle ?? ""
-        let restoredDetail = appPreferences.topCaseDetail ?? AppPreferences.defaultCaseDetail
-        self.cases = [ReportCase(title: restoredTitle, detail: restoredDetail)]
+        let restoredDetails = appPreferences.topCaseDetails ?? AppPreferences.defaultCaseDetails
+        self.cases = [ReportCase(title: restoredTitle, details: restoredDetails)]
         self.imageURLs = []
 
         let savedFormat = preferences.lastExportFormat.flatMap { ExportFormat(rawValue: $0) } ?? .jpg
@@ -102,14 +102,20 @@ final class ReportViewModel: ObservableObject {
 
     func addCase() {
         // W3-I: 追加ケースも同じデフォルト文言で始める
-        cases.append(ReportCase(title: "", detail: AppPreferences.defaultCaseDetail))
+        cases.append(ReportCase(title: "", details: AppPreferences.defaultCaseDetails))
     }
 
     func removeCase(at offsets: IndexSet) {
         cases.remove(atOffsets: offsets)
         if cases.isEmpty {
-            cases.append(ReportCase(title: "", detail: AppPreferences.defaultCaseDetail))
+            cases.append(ReportCase(title: "", details: AppPreferences.defaultCaseDetails))
         }
+    }
+
+    // W3-F1: 単一インデックス削除（× ボタン用）
+    func removeCase(at index: Int) {
+        guard cases.indices.contains(index), cases.count > 1 else { return }
+        cases.remove(at: index)
     }
 
     func moveCase(from source: IndexSet, to destination: Int) {
@@ -123,7 +129,7 @@ final class ReportViewModel: ObservableObject {
             .sink { [weak self] newCases in
                 guard let self, let first = newCases.first else { return }
                 self.appPreferences.topCaseTitle = first.title
-                self.appPreferences.topCaseDetail = first.detail
+                self.appPreferences.topCaseDetails = first.details
             }
             .store(in: &cancellables)
     }
