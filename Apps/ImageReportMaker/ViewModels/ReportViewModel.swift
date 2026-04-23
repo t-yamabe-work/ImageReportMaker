@@ -41,7 +41,10 @@ final class ReportViewModel: ObservableObject {
     private var debounceTask: Task<Void, Never>?
     private var cancellables = Set<AnyCancellable>()
 
-    private static let previewDebounceNanos: UInt64 = 300_000_000
+    // V5-2: 入力レスポンス改善のためデバウンスを 300ms → 500ms に延長
+    private static let previewDebounceNanos: UInt64 = 500_000_000
+    // V5-2: topCase 永続化の Combine sink デバウンス
+    private static let topCasePersistDebounceMs: Int = 500
 
     init(
         preferences: UserPreferences = .shared,
@@ -123,9 +126,15 @@ final class ReportViewModel: ObservableObject {
     }
 
     // W3-J: cases[0] の変更を監視して永続化
+    // V5-2: 毎キーストロークで UserDefaults に同期書き込みすると入力が重くなるため
+    //        500ms デバウンスを挟んで最後の入力から落ち着いた時点だけ書き出す。
     private func bindTopCasePersistence() {
         $cases
             .dropFirst()
+            .debounce(
+                for: .milliseconds(Self.topCasePersistDebounceMs),
+                scheduler: DispatchQueue.main
+            )
             .sink { [weak self] newCases in
                 guard let self, let first = newCases.first else { return }
                 self.appPreferences.topCaseTitle = first.title
