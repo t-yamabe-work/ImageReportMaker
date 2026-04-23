@@ -1,8 +1,16 @@
 import SwiftUI
 import ReportCore
 
+// V5-3: 入力欄の自動フォーカス用フィールド識別子
+enum ReportField: Hashable {
+    case caseTitle(UUID)
+    case caseDetail(UUID, Int)
+}
+
 struct CaseListView: View {
     @ObservedObject var viewModel: ReportViewModel
+    @FocusState private var focused: ReportField?
+    @State private var didInitialFocus = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -14,6 +22,13 @@ struct CaseListView: View {
                 Button {
                     viewModel.addCase()
                     viewModel.requestPreviewRefresh()
+                    // V5-3: 追加された案件タイトル欄へフォーカス移動
+                    if let last = viewModel.cases.last {
+                        let id = last.id
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                            focused = .caseTitle(id)
+                        }
+                    }
                 } label: {
                     Label("追加", systemImage: "plus")
                         .font(.title3)
@@ -25,6 +40,7 @@ struct CaseListView: View {
                 ForEach(Array(viewModel.cases.enumerated()), id: \.element.id) { index, _ in
                     CaseRowView(
                         item: $viewModel.cases[index],
+                        focused: $focused,
                         canRemoveCase: viewModel.cases.count > 1,
                         onRemoveCase: {
                             viewModel.removeCase(at: index)
@@ -46,11 +62,22 @@ struct CaseListView: View {
             .listStyle(.inset)
             .frame(minHeight: 200)
         }
+        .onAppear {
+            // V5-3: 起動時に1件目の案件タイトル欄へフォーカス（複数回 onAppear が来ても1度だけ）
+            guard !didInitialFocus else { return }
+            didInitialFocus = true
+            if let firstId = viewModel.cases.first?.id {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    focused = .caseTitle(firstId)
+                }
+            }
+        }
     }
 }
 
 private struct CaseRowView: View {
     @Binding var item: ReportCase
+    @FocusState.Binding var focused: ReportField?
     let canRemoveCase: Bool
     let onRemoveCase: () -> Void
     let onChange: () -> Void
@@ -63,6 +90,7 @@ private struct CaseRowView: View {
                 TextField("案件名", text: $item.title)
                     .font(.title3)
                     .textFieldStyle(.roundedBorder)
+                    .focused($focused, equals: .caseTitle(item.id))
                     .onChange(of: item.title) { _ in onChange() }
 
                 Button {
@@ -87,6 +115,12 @@ private struct CaseRowView: View {
                 Button {
                     item.details.append("")
                     onChange()
+                    // V5-3: 追加された詳細欄へフォーカス移動
+                    let newIndex = item.details.count - 1
+                    let id = item.id
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                        focused = .caseDetail(id, newIndex)
+                    }
                 } label: {
                     Label("詳細を追加", systemImage: "plus.circle")
                         .font(.callout)
@@ -121,6 +155,7 @@ private struct CaseRowView: View {
             .lineLimit(1...4)
             .font(.title3)
             .textFieldStyle(.roundedBorder)
+            .focused($focused, equals: .caseDetail(item.id, index))
 
             Button {
                 guard item.details.indices.contains(index), item.details.count >= 2 else { return }
