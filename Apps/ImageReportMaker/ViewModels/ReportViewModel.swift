@@ -150,6 +150,16 @@ final class ReportViewModel: ObservableObject {
         imageURLs.removeAll { $0 == url }
     }
 
+    // W3-F3: グリッド内ドラッグでサムネを並び替える。
+    // 結果として `imageURLs[target]` が移動元のアイテムになる。
+    func moveImage(from source: Int, to target: Int) {
+        guard imageURLs.indices.contains(source),
+              target >= 0, target < imageURLs.count,
+              source != target else { return }
+        let toOffset = source < target ? target + 1 : target
+        imageURLs.move(fromOffsets: IndexSet(integer: source), toOffset: toOffset)
+    }
+
     // MARK: - Preview rendering (W3-H debounced)
 
     func requestPreviewRefresh() {

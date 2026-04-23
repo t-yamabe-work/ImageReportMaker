@@ -9,6 +9,15 @@ struct ImageDropZoneView: View {
     // W3-C: .png/.jpeg だけだと一部のシステムで弾かれるため .image と .fileURL も含める
     private let acceptedTypes: [UTType] = [.png, .jpeg, .image, .fileURL]
 
+    // W3-F3: 内部ドラッグ識別用のカスタム UTI（インデックス文字列を運ぶ）
+    private static let internalIndexIdentifier = "com.tyamabe.imagereportmaker.image-index"
+    private static let internalIndexUTType: UTType = {
+        if let t = UTType(internalIndexIdentifier) { return t }
+        return UTType(exportedAs: internalIndexIdentifier, conformingTo: .data)
+    }()
+
+    private let columns = [GridItem(.adaptive(minimum: 108, maximum: 108), spacing: 10, alignment: .top)]
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
@@ -28,15 +37,26 @@ struct ImageDropZoneView: View {
             dropTarget
 
             if !viewModel.imageURLs.isEmpty {
-                ScrollView(.horizontal, showsIndicators: true) {
-                    LazyHStack(spacing: 10) {
-                        ForEach(viewModel.imageURLs, id: \.self) { url in
-                            thumbnail(for: url)
+                ScrollView(.vertical, showsIndicators: true) {
+                    LazyVGrid(columns: columns, alignment: .leading, spacing: 10) {
+                        ForEach(Array(viewModel.imageURLs.enumerated()), id: \.element) { index, url in
+                            thumbnail(for: url, at: index)
+                                .onDrag {
+                                    makeIndexProvider(for: index)
+                                }
+                                .onDrop(
+                                    of: [Self.internalIndexUTType],
+                                    delegate: ThumbnailDropDelegate(
+                                        targetIndex: index,
+                                        viewModel: viewModel,
+                                        internalIdentifier: Self.internalIndexIdentifier
+                                    )
+                                )
                         }
                     }
                     .padding(.vertical, 6)
                 }
-                .frame(height: 120)
+                .frame(maxHeight: 240)
             }
         }
     }
@@ -61,7 +81,7 @@ struct ImageDropZoneView: View {
             .onDrop(of: acceptedTypes, isTargeted: $isTargeted, perform: handleDrop(providers:))
     }
 
-    private func thumbnail(for url: URL) -> some View {
+    private func thumbnail(for url: URL, at index: Int) -> some View {
         ZStack(alignment: .topTrailing) {
             thumbnailImage(for: url)
                 .frame(width: 108, height: 108)
@@ -100,10 +120,31 @@ struct ImageDropZoneView: View {
         }
     }
 
+    // MARK: - Internal drag provider (W3-F3)
+
+    private func makeIndexProvider(for index: Int) -> NSItemProvider {
+        let provider = NSItemProvider()
+        let payload = "\(index)".data(using: .utf8) ?? Data()
+        provider.registerDataRepresentation(
+            forTypeIdentifier: Self.internalIndexIdentifier,
+            visibility: .ownProcess
+        ) { completion in
+            completion(payload, nil)
+            return nil
+        }
+        return provider
+    }
+
     // MARK: - Drop handling (W3-C)
 
     private func handleDrop(providers: [NSItemProvider]) -> Bool {
-        let captured = providers
+        // 内部 UTI のみのプロバイダ（並び替え）はここでは扱わない
+        let externalProviders = providers.filter {
+            !$0.hasItemConformingToTypeIdentifier(Self.internalIndexIdentifier)
+        }
+        guard !externalProviders.isEmpty else { return false }
+
+        let captured = externalProviders
         Task { @MainActor in
             var collected: [URL] = []
             for provider in captured {
@@ -187,6 +228,36 @@ struct ImageDropZoneView: View {
             viewModel.addImages(panel.urls)
             viewModel.requestPreviewRefresh()
         }
+    }
+}
+
+// MARK: - Reorder drop delegate (W3-F3)
+
+private struct ThumbnailDropDelegate: DropDelegate {
+    let targetIndex: Int
+    let viewModel: ReportViewModel
+    let internalIdentifier: String
+
+    func validateDrop(info: DropInfo) -> Bool {
+        info.hasItemsConforming(to: [UTType(internalIdentifier) ?? .data])
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        let providers = info.itemProviders(for: [UTType(internalIdentifier) ?? .data])
+        guard let provider = providers.first else { return false }
+
+        let target = targetIndex
+        let identifier = internalIdentifier
+        provider.loadDataRepresentation(forTypeIdentifier: identifier) { data, _ in
+            guard let data,
+                  let str = String(data: data, encoding: .utf8),
+                  let from = Int(str) else { return }
+            Task { @MainActor in
+                viewModel.moveImage(from: from, to: target)
+                viewModel.requestPreviewRefresh()
+            }
+        }
+        return true
     }
 }
 
