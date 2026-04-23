@@ -1,9 +1,11 @@
 # =========================================================
 # 画像報告書メーカー — xcodegen 定義
-# Core SPM (ReportCore) を依存として参照するシングルターゲット構成
-#   - ImageReportMaker (メインアプリ / 画像報告書メーカー.app)
+# Core SPM (ReportCore) を依存として参照する2ターゲット構成
+#   - ImageReportMaker (安定版 / 画像報告書メーカー.app)
+#   - ImageReportMakerBeta (β版 / 画像報告書メーカーβ.app、開発者ローカル検証用)
 #     ・PRODUCT_NAME はASCII固定
-#     ・表示名は CFBundleDisplayName で「画像報告書メーカー」
+#     ・表示名は CFBundleDisplayName で日本語
+#     ・Bundle ID を分けることで安定版と並行インストール・UserDefaults分離
 # このファイルが真実のソース。`.xcodeproj` は生成物。
 # =========================================================
 
@@ -68,11 +70,52 @@ targets:
         GENERATE_INFOPLIST_FILE: NO
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
 
+  ImageReportMakerBeta:
+    type: application
+    platform: macOS
+    sources:
+      - path: Apps/ImageReportMaker
+    dependencies:
+      - package: ReportCore
+    info:
+      path: Apps/ImageReportMaker/Info-Beta.plist
+      properties:
+        CFBundleDisplayName: 画像報告書メーカーβ
+        CFBundleIconName: AppIconBeta
+        CFBundleName: $(PRODUCT_NAME)
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSApplicationCategoryType: public.app-category.productivity
+        NSHumanReadableCopyright: "© 2026 ImageReportMaker (β)"
+        NSPrincipalClass: NSApplication
+        NSHighResolutionCapable: true
+    entitlements:
+      path: Apps/ImageReportMaker/ImageReportMaker.entitlements
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.tyamabe.imagereportmaker.beta
+        PRODUCT_NAME: ImageReportMakerBeta
+        GENERATE_INFOPLIST_FILE: NO
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIconBeta
+
 schemes:
   ImageReportMaker:
     build:
       targets:
         ImageReportMaker: all
+    run:
+      config: Debug
+    profile:
+      config: Release
+    analyze:
+      config: Debug
+    archive:
+      config: Release
+
+  ImageReportMakerBeta:
+    build:
+      targets:
+        ImageReportMakerBeta: all
     run:
       config: Debug
     profile:

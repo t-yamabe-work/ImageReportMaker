@@ -76,6 +76,26 @@ open ImageReportMaker.xcodeproj
 scripts/build-and-install.sh
 ```
 
+### β版（開発者ローカル検証用）
+
+このリポジトリは2ターゲット構成で、β版を安定版と**並行インストール**できます：
+
+```sh
+scripts/build-and-install-beta.sh
+```
+
+- インストール先：`/Applications/画像報告書メーカーβ.app`
+- Bundle ID：`com.tyamabe.imagereportmaker.beta`（安定版と別）
+- UserDefaults も別保存 → 設定が混ざらない
+- アイコンはオレンジ色＋右下に「β」マーク
+- β版は GitHub Releases には公開せず、開発者本人のMacでのみ動作確認に使う
+
+### ブランチ戦略
+
+- `main`：安定版のソース。GitHub Releases の元になる
+- `develop`：次バージョンの実装中。β版はここからビルドする
+- 機能単位で `feature/*` を切って `develop` へマージ、まとまったら `develop` → `main` → タグ → Release
+
 ## ディレクトリ構成
 
 ```

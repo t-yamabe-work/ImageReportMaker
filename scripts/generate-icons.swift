@@ -1,7 +1,8 @@
 #!/usr/bin/env swift
 // =========================================================
 // 画像報告書メーカー — 仮アイコン生成
-// 青背景に白文字「画報」を描画した PNG を AppIcon.appiconset に出力する
+// 引数なし        → 青背景 AppIcon.appiconset（安定版）
+// 引数 --beta    → オレンジ背景 AppIconBeta.appiconset（β版）
 // 本格アイコンは v1.0.0 で差し替え予定
 // =========================================================
 import AppKit
@@ -12,10 +13,39 @@ import UniformTypeIdentifiers
 let fm = FileManager.default
 let scriptURL = URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL
 let repoRoot = scriptURL.deletingLastPathComponent().deletingLastPathComponent()
+
+let isBeta = CommandLine.arguments.contains("--beta")
+let assetName = isBeta ? "AppIconBeta.appiconset" : "AppIcon.appiconset"
 let iconSetDir = repoRoot
-    .appendingPathComponent("Apps/ImageReportMaker/Resources/Assets.xcassets/AppIcon.appiconset")
+    .appendingPathComponent("Apps/ImageReportMaker/Resources/Assets.xcassets/\(assetName)")
 
 try? fm.createDirectory(at: iconSetDir, withIntermediateDirectories: true)
+
+// β版の Contents.json を初回のみ生成（既存があればそのまま）
+if isBeta {
+    let contentsURL = iconSetDir.appendingPathComponent("Contents.json")
+    if !fm.fileExists(atPath: contentsURL.path) {
+        let contents = """
+        {
+          "images" : [
+            { "size" : "16x16", "idiom" : "mac", "filename" : "icon_16x16.png", "scale" : "1x" },
+            { "size" : "16x16", "idiom" : "mac", "filename" : "icon_16x16@2x.png", "scale" : "2x" },
+            { "size" : "32x32", "idiom" : "mac", "filename" : "icon_32x32.png", "scale" : "1x" },
+            { "size" : "32x32", "idiom" : "mac", "filename" : "icon_32x32@2x.png", "scale" : "2x" },
+            { "size" : "128x128", "idiom" : "mac", "filename" : "icon_128x128.png", "scale" : "1x" },
+            { "size" : "128x128", "idiom" : "mac", "filename" : "icon_128x128@2x.png", "scale" : "2x" },
+            { "size" : "256x256", "idiom" : "mac", "filename" : "icon_256x256.png", "scale" : "1x" },
+            { "size" : "256x256", "idiom" : "mac", "filename" : "icon_256x256@2x.png", "scale" : "2x" },
+            { "size" : "512x512", "idiom" : "mac", "filename" : "icon_512x512.png", "scale" : "1x" },
+            { "size" : "512x512", "idiom" : "mac", "filename" : "icon_512x512@2x.png", "scale" : "2x" }
+          ],
+          "info" : { "version" : 1, "author" : "xcode" }
+        }
+
+        """
+        try? contents.write(to: contentsURL, atomically: true, encoding: .utf8)
+    }
+}
 
 struct IconSpec {
     let size: Int       // 実ピクセルサイズ
@@ -36,6 +66,17 @@ let specs: [IconSpec] = [
     .init(size: 1024, fileName: "icon_512x512@2x.png"),
 ]
 
+// 安定版: 青グラデ、β版: オレンジグラデ
+let gradientColors: [CGColor] = isBeta
+    ? [
+        CGColor(red: 0.82, green: 0.32, blue: 0.08, alpha: 1.0),
+        CGColor(red: 0.96, green: 0.58, blue: 0.18, alpha: 1.0)
+      ]
+    : [
+        CGColor(red: 0.12, green: 0.28, blue: 0.58, alpha: 1.0),
+        CGColor(red: 0.22, green: 0.52, blue: 0.85, alpha: 1.0)
+      ]
+
 func renderIcon(size: Int) -> CGImage? {
     let px = size
     let colorSpace = CGColorSpaceCreateDeviceRGB()
@@ -50,18 +91,14 @@ func renderIcon(size: Int) -> CGImage? {
 
     let rect = CGRect(x: 0, y: 0, width: px, height: px)
 
-    // 背景：角丸矩形 濃紺→青のグラデ
+    // 背景：角丸矩形 濃紺→青（or 赤茶→オレンジ）のグラデ
     let cornerRadius = CGFloat(px) * 0.2237 // macOS squircle比
     let clipPath = CGPath(roundedRect: rect, cornerWidth: cornerRadius, cornerHeight: cornerRadius, transform: nil)
     ctx.saveGState()
     ctx.addPath(clipPath)
     ctx.clip()
 
-    let colors = [
-        CGColor(red: 0.12, green: 0.28, blue: 0.58, alpha: 1.0),
-        CGColor(red: 0.22, green: 0.52, blue: 0.85, alpha: 1.0)
-    ] as CFArray
-    if let gradient = CGGradient(colorsSpace: colorSpace, colors: colors, locations: [0, 1]) {
+    if let gradient = CGGradient(colorsSpace: colorSpace, colors: gradientColors as CFArray, locations: [0, 1]) {
         ctx.drawLinearGradient(
             gradient,
             start: CGPoint(x: 0, y: CGFloat(px)),
@@ -98,6 +135,30 @@ func renderIcon(size: Int) -> CGImage? {
     attributed.draw(in: textRect)
     NSGraphicsContext.restoreGraphicsState()
 
+    // β版: 右下にβマーク
+    if isBeta {
+        let betaSize = CGFloat(px) * 0.30
+        let betaFont = NSFont(name: "HiraginoSans-W6", size: betaSize)
+            ?? NSFont.boldSystemFont(ofSize: betaSize)
+        let betaAttrs: [NSAttributedString.Key: Any] = [
+            .font: betaFont,
+            .foregroundColor: NSColor(white: 1, alpha: 0.85)
+        ]
+        let betaText = NSAttributedString(string: "β", attributes: betaAttrs)
+        let betaTextSize = betaText.size()
+        let betaRect = CGRect(
+            x: CGFloat(px) - betaTextSize.width - CGFloat(px) * 0.06,
+            y: CGFloat(px) * 0.05,
+            width: betaTextSize.width,
+            height: betaTextSize.height
+        )
+        let nsContext2 = NSGraphicsContext(cgContext: ctx, flipped: false)
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = nsContext2
+        betaText.draw(in: betaRect)
+        NSGraphicsContext.restoreGraphicsState()
+    }
+
     ctx.restoreGState()
 
     // うっすら縁
@@ -132,4 +193,4 @@ for spec in specs {
     generated.append(spec.fileName)
 }
 
-print("generated \(generated.count) icons at \(iconSetDir.path)")
+print("generated \(generated.count) icons at \(iconSetDir.path) \(isBeta ? "(beta)" : "(stable)")")
